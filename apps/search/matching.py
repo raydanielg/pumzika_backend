@@ -123,17 +123,6 @@ def _candidate_queryset(params: dict):
             status__in=BLOCKING,
         ).values("property_id")
         qs = qs.exclude(id__in=blocked_ids)
-        # Multi-unit properties: keep only if some unit still has a free copy.
-        qs = qs.annotate(
-            _booked_night_units=Count(
-                "units__availability_dates",
-                filter=Q(
-                    units__availability_dates__date__gte=check_in,
-                    units__availability_dates__date__lt=check_out,
-                    units__availability_dates__status=AvailabilityStatus.BOOKED,
-                ),
-            )
-        )
         qs = qs.filter(
             Q(units__isnull=True)  # whole-property listing — already checked
             | Q(units__is_active=True)
@@ -237,15 +226,50 @@ def _price(prop: Property, check_in, check_out) -> Decimal | None:
         return None
 
 
+def _sold_out_unit_ids(properties, check_in, check_out) -> set:
+    """One query: per (unit, night) BOOKED counts -> units at capacity."""
+    unit_map = {}
+    for prop in properties:
+        for u in prop.units.all():
+            if u.is_active:
+                unit_map[u.id] = u.quantity
+    if not unit_map:
+        return set()
+    booked = (
+        AvailabilityDate.objects.filter(
+            unit_id__in=unit_map.keys(),
+            date__gte=check_in, date__lt=check_out,
+            status=AvailabilityStatus.BOOKED,
+        )
+        .values("unit_id", "date")
+        .annotate(n=Count("id"))
+    )
+    sold = set()
+    for row in booked:
+        if row["n"] >= unit_map[row["unit_id"]]:
+            sold.add(row["unit_id"])
+    return sold
+
+
 def match_stays(params: dict, limit: int = 60) -> list[MatchResult]:
     """Score + rank candidates. Limited pool — ranking beyond the head
     of the list has no guest value and wastes pricing calls."""
     qs = _candidate_queryset(params)
     check_in, check_out = params.get("check_in"), params.get("check_out")
 
+    properties = list(qs[:limit])
+    if check_in and check_out:
+        sold_out = _sold_out_unit_ids(properties, check_in, check_out)
+        properties = [
+            p for p in properties
+            if not p.units.all().exists()
+            or any(u.is_active and u.id not in sold_out
+                   for u in p.units.all())
+        ]
+
     results = [
         MatchResult(property=p, score=s, label=_label(s), reasons=r)
-        for p in qs[:limit]
+        for p in properties
         for s, r in [_score(p, params)]
     ]
     sort = params.get("sort") or "recommended"
