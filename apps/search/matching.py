@@ -262,9 +262,8 @@ def match_stays(params: dict, limit: int = 60) -> list[MatchResult]:
         sold_out = _sold_out_unit_ids(properties, check_in, check_out)
         properties = [
             p for p in properties
-            if not p.units.all().exists()
-            or any(u.is_active and u.id not in sold_out
-                   for u in p.units.all())
+            if not (units := list(p.units.all()))
+            or any(u.is_active and u.id not in sold_out for u in units)
         ]
 
     results = [

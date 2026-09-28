@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from rest_framework import serializers
@@ -48,4 +49,42 @@ class SearchParamsSerializer(serializers.Serializer):
             )
         if check_in and check_out and check_in >= check_out:
             raise serializers.ValidationError("check_out must be after check_in.")
+        return attrs
+
+
+PREFERENCE_CHOICES = [
+    "beach", "city", "quiet", "family", "business",
+    "romantic", "adventure", "nature", "luxury", "budget",
+]
+
+
+class MatchRequestSerializer(serializers.Serializer):
+    destination = serializers.CharField(required=False, allow_blank=True,
+                                        max_length=100)
+    check_in = serializers.DateField(required=False)
+    check_out = serializers.DateField(required=False)
+    guests = serializers.IntegerField(min_value=1, max_value=50)
+    budget_per_night = serializers.DecimalField(
+        max_digits=12, decimal_places=2, min_value=_ZERO, required=False)
+    currency = serializers.CharField(required=False, allow_blank=True,
+                                     max_length=3)
+    preferences = serializers.ListField(
+        child=serializers.ChoiceField(choices=PREFERENCE_CHOICES),
+        required=False, allow_empty=True, max_length=10,
+    )
+    sort = serializers.ChoiceField(
+        choices=["recommended", "price_asc", "price_desc", "rating"],
+        required=False, default="recommended",
+    )
+    page = serializers.IntegerField(min_value=1, required=False, default=1)
+    page_size = serializers.IntegerField(min_value=1, max_value=50,
+                                         required=False, default=20)
+
+    def validate(self, attrs):
+        check_in, check_out = attrs.get("check_in"), attrs.get("check_out")
+        if check_in and check_out and check_in >= check_out:
+            raise serializers.ValidationError(
+                "check_out must be after check_in.")
+        if check_in and check_in < date.today():
+            raise serializers.ValidationError("check_in cannot be in the past.")
         return attrs

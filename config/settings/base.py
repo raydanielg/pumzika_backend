@@ -297,11 +297,13 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/minute",
         "user": "300/minute",
         "auth": "10/minute",
+        "match": "30/minute",
         "auth_strict": "5/minute",
         "payment": "30/minute",
         "webhook": "600/minute",
