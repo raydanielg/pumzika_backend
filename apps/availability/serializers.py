@@ -7,6 +7,7 @@ from rest_framework import serializers
 class DateRangeSerializer(serializers.Serializer):
     start_date = serializers.DateField()
     end_date = serializers.DateField()
+    unit_id = serializers.UUIDField(required=False, allow_null=True)
 
     def validate(self, attrs):
         if attrs["start_date"] >= attrs["end_date"]:
@@ -36,6 +37,7 @@ class CalendarDaySerializer(serializers.Serializer):
 class CalendarQuerySerializer(serializers.Serializer):
     start_date = serializers.DateField()
     end_date = serializers.DateField()
+    unit_id = serializers.UUIDField(required=False, allow_null=True)
 
     def validate(self, attrs):
         if attrs["start_date"] >= attrs["end_date"]:

@@ -93,7 +93,7 @@ class BookingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
         fields = [
-            "id", "reference", "guest", "guest_email", "property",
+            "id", "reference", "guest", "guest_email", "property", "unit", "unit_name",
             "property_title", "property_city", "property_location",
             "check_in", "check_out",
             "guests_count", "adults", "children", "infants",
@@ -145,6 +145,7 @@ class GuestBreakdownSerializer(serializers.Serializer):
 
 class BookingCreateSerializer(serializers.Serializer):
     property_id = serializers.UUIDField()
+    unit_id = serializers.UUIDField(required=False, allow_null=True)
     check_in = serializers.DateField()
     check_out = serializers.DateField()
     guests_count = serializers.IntegerField(
@@ -181,6 +182,7 @@ class BookingNoteSerializer(serializers.ModelSerializer):
 
 class BookingQuoteSerializer(serializers.Serializer):
     property_id = serializers.UUIDField()
+    unit_id = serializers.UUIDField(required=False, allow_null=True)
     check_in = serializers.DateField()
     check_out = serializers.DateField()
     promo_code = serializers.CharField(required=False, allow_blank=True, max_length=50)

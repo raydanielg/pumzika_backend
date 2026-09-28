@@ -25,6 +25,7 @@ from .serializers import (
     PropertyPricingSerializer,
     PropertyPublicSerializer,
     PropertyRuleSerializer,
+    PropertyUnitSerializer,
     PropertyTypeSerializer,
 )
 
@@ -259,6 +260,37 @@ class PropertyViewSet(viewsets.ModelViewSet):
     def delete_special_pricing(self, request, pk=None, pricing_id=None):
         self.get_object().special_pricings.filter(pk=pricing_id).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # — Units (rooms/beds inside a multi-unit property) —
+
+    @decorators.action(detail=True, methods=["get", "post"])
+    def units(self, request, pk=None):
+        prop = self.get_object()
+        if request.method == "GET":
+            units = prop.units.all()
+            return Response(PropertyUnitSerializer(units, many=True).data)
+        IsPropertyHostOrStaff().has_object_permission(request, self, prop)             or self.permission_denied(request)
+        serializer = PropertyUnitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        unit = prop.units.create(**serializer.validated_data)
+        return Response(PropertyUnitSerializer(unit).data,
+                        status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=["patch", "delete"],
+                       url_path="units/(?P<unit_id>[^/.]+)")
+    def unit_detail(self, request, pk=None, unit_id=None):
+        prop = self.get_object()
+        IsPropertyHostOrStaff().has_object_permission(request, self, prop)             or self.permission_denied(request)
+        unit = prop.units.filter(pk=unit_id).first()
+        if unit is None:
+            raise NotFoundError("Unit not found.", code="UNIT_NOT_FOUND")
+        if request.method == "DELETE":
+            unit.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        serializer = PropertyUnitSerializer(unit, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class PropertyDetailById(generics.RetrieveAPIView):

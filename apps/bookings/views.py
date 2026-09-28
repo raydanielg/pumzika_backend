@@ -126,6 +126,7 @@ class BookingViewSet(viewsets.GenericViewSet,
             check_in=data["check_in"],
             check_out=data["check_out"],
             guests_count=data.get("guests_count") or 1,
+            unit_id=data.get("unit_id"),
             adults=guests.get("adults"),
             children=guests.get("children", 0),
             infants=guests.get("infants", 0),
@@ -210,8 +211,13 @@ class BookingQuoteView(APIView):
         prop = Property.objects.filter(pk=data["property_id"]).first()
         if prop is None:
             raise NotFoundError("Property not found.", code="PROPERTY_NOT_FOUND")
+        unit = None
+        if data.get("unit_id"):
+            unit = prop.units.filter(pk=data["unit_id"], is_active=True).first()
+            if unit is None:
+                raise NotFoundError("Unit not found.", code="UNIT_NOT_FOUND")
         quote = services.quote_for_property(
             prop, data["check_in"], data["check_out"],
-            data.get("promo_code", ""), guest=request.user,
+            data.get("promo_code", ""), guest=request.user, unit=unit,
         )
         return Response(quote)

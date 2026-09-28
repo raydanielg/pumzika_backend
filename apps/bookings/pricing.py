@@ -47,9 +47,9 @@ class PriceBreakdown:
 
 
 def compute_quote(prop, check_in: date, check_out: date,
-                  discount: Decimal = Decimal("0.00")) -> PriceBreakdown:
+                  discount: Decimal = Decimal("0.00"), unit=None) -> PriceBreakdown:
     """Authoritative quote for a stay. All inputs Decimal; no floats."""
-    prices = nightly_prices(prop, check_in, check_out)
+    prices = nightly_prices(prop, check_in, check_out, unit=unit)
     nights = nights_between(check_in, check_out)
 
     nightly_subtotal = money(sum(prices.values(), Decimal("0")))

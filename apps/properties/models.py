@@ -290,3 +290,35 @@ class PropertyDocument(UUIDModel):
 
     class Meta:
         indexes = [models.Index(fields=["property", "document_type"])]
+
+
+class PropertyUnit(UUIDModel):
+    """A bookable unit inside a property — hotel room, apartment unit, dorm bed.
+
+    Whole-property listings can leave this empty; multi-unit properties
+    (hotels, lodges, guesthouses) create one row per sellable unit type.
+    """
+
+    property = models.ForeignKey(
+        Property, on_delete=models.CASCADE, related_name="units"
+    )
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    quantity = models.PositiveIntegerField(
+        default=1, help_text="How many identical units of this type exist."
+    )
+    max_guests = models.PositiveIntegerField(default=1)
+    beds = models.PositiveIntegerField(default=1)
+    bedrooms = models.PositiveIntegerField(default=0)
+    bathrooms = models.DecimalField(max_digits=3, decimal_places=1, default=1)
+    price_per_night = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(0)],
+        help_text="Nightly price override; empty falls back to property base price.",
+    )
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+        indexes = [models.Index(fields=["property", "is_active"])]

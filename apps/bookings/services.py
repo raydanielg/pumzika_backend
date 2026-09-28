@@ -97,7 +97,7 @@ def _transition(booking: Booking, to_status: str, changed_by=None, note: str = "
 
 
 def quote_for_property(prop: Property, check_in: date, check_out: date,
-                       promo_code: str = "", guest=None) -> dict:
+                       promo_code: str = "", guest=None, unit=None) -> dict:
     """Public price preview — same engine used at booking creation."""
     availability.check_availability(prop, check_in, check_out)
     discount = Decimal("0")
@@ -108,7 +108,7 @@ def quote_for_property(prop: Property, check_in: date, check_out: date,
         promo, discount = promo_service.validate_for_booking(
             promo_code, prop, guest, check_in, check_out
         )
-    breakdown = compute_quote(prop, check_in, check_out, discount)
+    breakdown = compute_quote(prop, check_in, check_out, discount, unit=unit)
     return breakdown.as_dict()
 
 
@@ -117,7 +117,7 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
                    guests_count: int, promo_code: str = "",
                    special_requests: str = "", guest_details: list | None = None,
                    adults: int | None = None, children: int = 0,
-                   infants: int = 0,
+                   infants: int = 0, unit_id=None,
                    idempotency_key: str | None = None, request=None) -> Booking:
     """Create a PENDING booking and lock the dates atomically.
 
@@ -156,6 +156,20 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
             f"This property allows at most {prop.max_guests} guests.",
             code="TOO_MANY_GUESTS",
         )
+
+    unit = None
+    if unit_id:
+        unit = prop.units.filter(pk=unit_id, is_active=True).first()
+        if unit is None:
+            raise BusinessError(
+                "That room is not available for booking.", code="UNIT_NOT_FOUND"
+            )
+        if guests_count > unit.max_guests:
+            raise BusinessError(
+                f"This unit allows at most {unit.max_guests} guests.",
+                code="TOO_MANY_GUESTS",
+            )
+
     availability.check_availability(prop, check_in, check_out)
 
     promo = None
@@ -167,7 +181,7 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
             promo_code, prop, guest, check_in, check_out
         )
 
-    breakdown = compute_quote(prop, check_in, check_out, discount)
+    breakdown = compute_quote(prop, check_in, check_out, discount, unit=unit)
 
     min_amount = settings_service.min_booking_amount()
     max_amount = settings_service.max_booking_amount()
@@ -192,6 +206,8 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
         # Historical snapshot — immune to later property/host edits.
         host=prop.host,
         property_title=prop.title,
+        unit=unit,
+        unit_name=unit.name if unit else "",
         property_address=prop.address,
         property_city_name=prop.city.name if prop.city else "",
         cancellation_policy=prop.cancellation_policy,

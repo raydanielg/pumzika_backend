@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from django.db import transaction
+from django.db import models, transaction
 
 from apps.common.exceptions import BusinessError
 from apps.common.utils import daterange, nights_between
@@ -41,7 +41,8 @@ def assert_property_bookable(prop: Property) -> None:
         )
 
 
-def check_availability(prop: Property, check_in: date, check_out: date) -> None:
+def check_availability(prop: Property, check_in: date, check_out: date,
+                       unit=None) -> None:
     """Raise unless every night in [check_in, check_out) is free.
 
     Must be called inside a transaction that has locked the property row.
@@ -61,14 +62,18 @@ def check_availability(prop: Property, check_in: date, check_out: date) -> None:
             f"Maximum stay is {prop.max_nights} nights.", code="MAX_NIGHTS"
         )
 
-    blocked = set(
-        AvailabilityDate.objects.filter(
-            property=prop,
-            date__gte=check_in,
-            date__lt=check_out,
-            status__in=BLOCKING_STATUSES,
-        ).values_list("date", flat=True)
+    rows = AvailabilityDate.objects.filter(
+        property=prop,
+        date__gte=check_in,
+        date__lt=check_out,
+        status__in=BLOCKING_STATUSES,
     )
+    if unit is not None:
+        # A unit is blocked by its own rows or by property-level blocks.
+        rows = rows.filter(models.Q(unit=unit) | models.Q(unit__isnull=True))
+    else:
+        rows = rows.filter(unit__isnull=True)
+    blocked = set(rows.values_list("date", flat=True))
     if blocked:
         raise BusinessError(
             "Property is not available for the selected dates.",
@@ -78,26 +83,34 @@ def check_availability(prop: Property, check_in: date, check_out: date) -> None:
 
 
 @transaction.atomic
-def mark_dates_booked(prop: Property, check_in: date, check_out: date, booking) -> None:
-    """Write BOOKED rows for each night — unique constraint = hard guarantee."""
+def mark_dates_booked(prop: Property, check_in: date, check_out: date,
+                      booking, unit=None) -> None:
+    """Write BOOKED rows for each night — unique constraint = hard guarantee.
+
+    A unit booking writes unit-scoped rows; a whole-property booking writes
+    property-level rows.
+    """
     rows = [
         AvailabilityDate(
             property=prop,
+            unit=unit,
             date=day,
             status=AvailabilityStatus.BOOKED,
             booking=booking,
         )
         for day in daterange(check_in, check_out)
     ]
-    # IntegrityError on duplicate (property, date) -> booking rolls back.
+    # IntegrityError on duplicate (property, unit, date) -> booking rolls back.
     AvailabilityDate.objects.bulk_create(rows)
 
 
 @transaction.atomic
-def release_dates(prop: Property, check_in: date, check_out: date) -> None:
+def release_dates(prop: Property, check_in: date, check_out: date,
+                  unit=None) -> None:
     """Free BOOKED rows when a booking is cancelled."""
     AvailabilityDate.objects.filter(
         property=prop,
+        unit=unit,
         date__gte=check_in,
         date__lt=check_out,
         status=AvailabilityStatus.BOOKED,
@@ -105,10 +118,11 @@ def release_dates(prop: Property, check_in: date, check_out: date) -> None:
 
 
 @transaction.atomic
-def block_dates(prop: Property, start: date, end: date, reason: str = "") -> int:
+def block_dates(prop: Property, start: date, end: date, reason: str = "",
+                unit=None) -> int:
     """Host blocks dates. Cannot block over an existing booking."""
     existing_booked = AvailabilityDate.objects.filter(
-        property=prop, date__gte=start, date__lt=end,
+        property=prop, unit=unit, date__gte=start, date__lt=end,
         status=AvailabilityStatus.BOOKED,
     ).exists()
     if existing_booked:
@@ -119,7 +133,7 @@ def block_dates(prop: Property, start: date, end: date, reason: str = "") -> int
     count = 0
     for day in daterange(start, end):
         AvailabilityDate.objects.update_or_create(
-            property=prop, date=day,
+            property=prop, unit=unit, date=day,
             defaults={"status": AvailabilityStatus.BLOCKED},
         )
         count += 1
@@ -127,10 +141,10 @@ def block_dates(prop: Property, start: date, end: date, reason: str = "") -> int
 
 
 @transaction.atomic
-def unblock_dates(prop: Property, start: date, end: date) -> int:
+def unblock_dates(prop: Property, start: date, end: date, unit=None) -> int:
     """Remove host blocks — booked dates are never touched."""
     deleted, _ = AvailabilityDate.objects.filter(
-        property=prop, date__gte=start, date__lt=end,
+        property=prop, unit=unit, date__gte=start, date__lt=end,
         status__in=[AvailabilityStatus.BLOCKED, AvailabilityStatus.UNAVAILABLE,
                     AvailabilityStatus.MAINTENANCE],
     ).delete()
@@ -139,11 +153,11 @@ def unblock_dates(prop: Property, start: date, end: date) -> int:
 
 @transaction.atomic
 def set_date_pricing(prop: Property, start: date, end: date,
-                     price, min_nights: int | None = None) -> int:
+                     price, min_nights: int | None = None, unit=None) -> int:
     count = 0
     for day in daterange(start, end):
         obj, created = AvailabilityDate.objects.get_or_create(
-            property=prop, date=day,
+            property=prop, unit=unit, date=day,
             defaults={"status": AvailabilityStatus.AVAILABLE},
         )
         if obj.status == AvailabilityStatus.BOOKED:
@@ -156,11 +170,15 @@ def set_date_pricing(prop: Property, start: date, end: date,
     return count
 
 
-def nightly_prices(prop: Property, check_in: date, check_out: date) -> dict[date, object]:
+def nightly_prices(prop: Property, check_in: date, check_out: date,
+                   unit=None) -> dict[date, object]:
     """Return {date: nightly_price} applying special pricing + date overrides.
 
     Precedence: AvailabilityDate.price_override > PropertyPricing range > base.
+    When a unit with its own nightly price is booked, that replaces the
+    property base price.
     """
+    base = getattr(unit, "price_per_night", None) or prop.base_price
     dates = list(daterange(check_in, check_out))
     overrides = {
         row.date: row.price_override
@@ -178,7 +196,7 @@ def nightly_prices(prop: Property, check_in: date, check_out: date) -> dict[date
         if day in overrides:
             prices[day] = overrides[day]
             continue
-        price = prop.base_price
+        price = base
         for special in specials:
             if special.start_date <= day <= special.end_date:
                 price = special.nightly_price
@@ -186,15 +204,26 @@ def nightly_prices(prop: Property, check_in: date, check_out: date) -> dict[date
     return prices
 
 
-def get_calendar(prop: Property, start: date, end: date) -> list[dict]:
-    """Merged calendar view for hosts/guests."""
-    records = {
-        row.date: row
-        for row in AvailabilityDate.objects.filter(
-            property=prop, date__gte=start, date__lt=end
-        )
-    }
-    prices = nightly_prices(prop, start, end)
+def get_calendar(prop: Property, start: date, end: date, unit=None) -> list[dict]:
+    """Merged calendar view for hosts/guests.
+
+    With `unit`: the unit's own rows merged over property-level blocks.
+    Without: property-level rows only.
+    """
+    qs = AvailabilityDate.objects.filter(
+        property=prop, date__gte=start, date__lt=end
+    )
+    if unit is not None:
+        qs = qs.filter(models.Q(unit=unit) | models.Q(unit__isnull=True))
+    else:
+        qs = qs.filter(unit__isnull=True)
+    # Unit rows take precedence over property-level rows for the same date.
+    records = {}
+    for row in qs:
+        existing = records.get(row.date)
+        if existing is None or (unit is not None and row.unit_id == unit.id):
+            records[row.date] = row
+    prices = nightly_prices(prop, start, end, unit=unit)
     calendar = []
     for day in daterange(start, end):
         record = records.get(day)

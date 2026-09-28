@@ -28,6 +28,11 @@ class AvailabilityDate(TimeStampedModel):
     property = models.ForeignKey(
         "properties.Property", on_delete=models.CASCADE, related_name="availability_dates"
     )
+    unit = models.ForeignKey(
+        "properties.PropertyUnit", on_delete=models.CASCADE,
+        null=True, blank=True, related_name="availability_dates",
+        help_text="When set, this row applies to one unit inside the property.",
+    )
     date = models.DateField(db_index=True)
     status = models.CharField(
         max_length=20, choices=AvailabilityStatus.choices,
@@ -44,11 +49,26 @@ class AvailabilityDate(TimeStampedModel):
     )
 
     class Meta:
-        unique_together = ("property", "date")
+        constraints = [
+            # Postgres treats NULL as distinct, so split the uniqueness:
+            # unit-scoped rows unique per (property, unit, date);
+            # property-level rows unique per (property, date).
+            models.UniqueConstraint(
+                fields=["property", "unit", "date"],
+                name="uniq_avail_prop_unit_date",
+                condition=models.Q(unit__isnull=False),
+            ),
+            models.UniqueConstraint(
+                fields=["property", "date"],
+                name="uniq_avail_prop_date_no_unit",
+                condition=models.Q(unit__isnull=True),
+            ),
+        ]
         indexes = [
             models.Index(fields=["property", "date", "status"]),
             models.Index(fields=["property", "status"]),
+            models.Index(fields=["unit", "date"]),
         ]
 
     def __str__(self) -> str:
-        return f"{self.property_id}:{self.date}:{self.status}"
+        return f"{self.property_id}:{self.unit_id}:{self.date}:{self.status}"

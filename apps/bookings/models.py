@@ -97,6 +97,11 @@ class Booking(UUIDModel):
     property = models.ForeignKey(
         "properties.Property", on_delete=models.PROTECT, related_name="bookings"
     )
+    unit = models.ForeignKey(
+        "properties.PropertyUnit", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="bookings",
+        help_text="Optional unit/room booked inside a multi-unit property.",
+    )
     check_in = models.DateField(db_index=True)
     check_out = models.DateField(db_index=True)
     guests_count = models.PositiveIntegerField(default=1)
@@ -111,6 +116,7 @@ class Booking(UUIDModel):
         related_name="hosted_bookings", null=True, blank=True,
     )
     property_title = models.CharField(max_length=200, blank=True)
+    unit_name = models.CharField(max_length=120, blank=True)
     property_address = models.CharField(max_length=255, blank=True)
     property_city_name = models.CharField(max_length=100, blank=True)
     cancellation_policy_name = models.CharField(max_length=100, blank=True)

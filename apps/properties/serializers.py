@@ -15,6 +15,7 @@ from .models import (
     PropertyPricing,
     PropertyRule,
     PropertyType,
+    PropertyUnit,
 )
 
 
@@ -84,6 +85,18 @@ class PropertyDocumentSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at"]
 
 
+class PropertyUnitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PropertyUnit
+        fields = [
+            "id", "name", "description", "quantity",
+            "max_guests", "beds", "bedrooms", "bathrooms",
+            "price_per_night", "is_active", "sort_order",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at"]
+
+
 class PropertyPublicSerializer(serializers.ModelSerializer):
     """What guests see — no internal fields."""
 
@@ -101,6 +114,7 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
     )
     host_verified = serializers.SerializerMethodField()
     cover_image = serializers.SerializerMethodField()
+    units = serializers.SerializerMethodField()
     # Location privacy: exact coordinates/address are only revealed to a
     # guest with a confirmed booking — the public gets an approximate pin.
     approximate_latitude = serializers.SerializerMethodField()
@@ -122,9 +136,12 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
             "check_in_time", "check_out_time", "instant_book",
             "rating", "review_count",
             "images", "cover_image", "amenities",
-            "host_name", "host_rating", "host_verified",
+            "host_name", "host_rating", "host_verified", "units",
             "created_at",
         ]
+
+    def get_units(self, obj):
+        return PropertyUnitSerializer(obj.units.filter(is_active=True), many=True).data
 
     def get_host_verified(self, obj) -> bool:
         profile = getattr(obj.host, "host_profile", None)
