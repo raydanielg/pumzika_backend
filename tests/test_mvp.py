@@ -160,6 +160,112 @@ class PaymentRetryTests(BaseTestCase):
         assert data["booking_reference"] == booking.reference
 
 
+class BookingLifecycleTests(BaseTestCase):
+    def test_unverified_guest_cannot_book(self):
+        self.guest.is_email_verified = False
+        self.guest.save()
+        with self.assertRaises(BusinessError) as ctx:
+            booking_services.create_booking(
+                self.guest, property_id=self.property.id,
+                check_in=self.check_in, check_out=self.check_out,
+                guests_count=1,
+            )
+        assert ctx.exception.code == "EMAIL_NOT_VERIFIED"
+
+    def test_guest_breakdown_validates_capacity(self):
+        with self.assertRaises(BusinessError) as ctx:
+            booking_services.create_booking(
+                self.guest, property_id=self.property.id,
+                check_in=self.check_in, check_out=self.check_out,
+                guests_count=1, adults=4, children=2,  # 6 > max_guests=4
+            )
+        assert ctx.exception.code == "TOO_MANY_GUESTS"
+
+        # Infants do not count toward occupancy.
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out,
+            guests_count=1, adults=3, children=1, infants=2,
+        )
+        assert booking.guests_count == 4
+        assert booking.infants == 2
+
+    def test_snapshot_survives_later_changes(self):
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        old_title = booking.property_title
+        old_total = booking.price.total
+        # Host edits + reprices the listing after the booking.
+        self.property.title = "Completely Different Name"
+        self.property.base_price = Decimal("999999")
+        self.property.save()
+
+        booking.refresh_from_db()
+        assert booking.property_title == old_title
+        assert booking.price.total == old_total
+        assert booking.host_id == self.host.id
+
+    def test_event_log_sequence(self):
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        payment = payment_services.initiate_payment(
+            self.guest, booking_id=booking.id, provider_code="MOCK",
+            idempotency_key="k-evt",
+        )
+        body = json.dumps({
+            "event_id": "evt-seq", "event_type": "payment.success",
+            "data": {"reference": payment.reference},
+        }).encode()
+        payment_services.process_webhook(
+            "MOCK", body, {"x-webhook-signature": mock_webhook_signature(body)}
+        )
+        events = list(booking.events.values_list("event_type", flat=True))
+        assert events.index("BOOKING_CREATED") < events.index("PAYMENT_STARTED") \
+            < events.index("PAYMENT_SUCCESS")
+        assert "BOOKING_CONFIRMED" in events
+
+    def test_host_cancel_requires_reason_and_refunds_fully(self):
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        booking_services.confirm_booking(booking)
+
+        with self.assertRaises(BusinessError) as ctx:
+            booking_services.cancel_booking(booking, self.host)
+        assert ctx.exception.code == "REASON_REQUIRED"
+
+        booking_services.cancel_booking(booking, self.host, "Host emergency")
+        assert booking.cancellation.refund_amount == booking.price.total
+
+    def test_auto_complete_checkouts(self):
+        from apps.bookings.tasks import auto_complete_checkouts
+
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        booking_services.confirm_booking(booking)
+        booking.refresh_from_db()
+        booking.check_in = timezone.now().date()
+        booking.save(update_fields=["check_in", "updated_at"])
+        booking_services.check_in(booking, self.host)
+        booking.refresh_from_db()
+        booking.check_out = timezone.now().date() - timedelta(days=1)
+        booking.save(update_fields=["check_out", "updated_at"])
+
+        ran = auto_complete_checkouts()
+        booking.refresh_from_db()
+        assert ran == 1
+        assert booking.status == Booking.Status.COMPLETED
+        # Idempotent — second run is a no-op.
+        assert auto_complete_checkouts() == 0
+
+
 class ModerationTests(BaseTestCase):
     def test_submit_requires_complete_listing(self):
         prop = _draft_property(self, with_images=0)

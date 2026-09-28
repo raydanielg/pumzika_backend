@@ -264,6 +264,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.notifications.tasks.cleanup_stale_notifications",
         "schedule": 60 * 60 * 24,  # daily
     },
+    "auto-complete-checkouts": {
+        "task": "apps.bookings.tasks.auto_complete_checkouts",
+        "schedule": 60 * 60,  # hourly
+    },
 }
 
 # --------------------------------------------------------------------------

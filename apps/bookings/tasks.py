@@ -49,6 +49,27 @@ def send_checkout_reminders() -> int:
 
 
 @shared_task
+def auto_complete_checkouts() -> int:
+    """CHECKED_IN bookings whose checkout date has passed -> COMPLETED.
+
+    Idempotent — complete_booking only transitions CHECKED_IN bookings, so a
+    repeated run is a no-op.
+    """
+    cutoff = timezone.now().date()
+    bookings = Booking.objects.filter(
+        status=Booking.Status.CHECKED_IN, check_out__lt=cutoff
+    )
+    count = 0
+    for booking in bookings.iterator():
+        try:
+            services.complete_booking(booking)
+            count += 1
+        except Exception:
+            continue
+    return count
+
+
+@shared_task
 def send_review_reminders() -> int:
     from apps.notifications.tasks import notify_review_reminder
 

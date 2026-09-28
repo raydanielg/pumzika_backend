@@ -8,7 +8,9 @@ from rest_framework import serializers
 from .models import (
     Booking,
     BookingCancellation,
+    BookingEvent,
     BookingGuest,
+    BookingNote,
     BookingPrice,
     BookingStatusHistory,
     CancellationPolicy,
@@ -69,6 +71,13 @@ class BookingCancellationSerializer(serializers.ModelSerializer):
         fields = ["reason", "cancelled_at", "refund_amount", "host_amount"]
 
 
+class _BookingEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BookingEvent
+        fields = ["event_type", "note", "data", "created_at"]
+        read_only_fields = fields
+
+
 class BookingSerializer(serializers.ModelSerializer):
     price = BookingPriceSerializer(read_only=True)
     guests = BookingGuestSerializer(many=True, read_only=True)
@@ -79,16 +88,21 @@ class BookingSerializer(serializers.ModelSerializer):
     # Exact location is revealed only once the stay is confirmed.
     property_location = serializers.SerializerMethodField()
 
+    events = _BookingEventSerializer(many=True, read_only=True)
+
     class Meta:
         model = Booking
         fields = [
             "id", "reference", "guest", "guest_email", "property",
             "property_title", "property_city", "property_location",
-            "check_in", "check_out", "guests_count", "status", "currency",
+            "check_in", "check_out",
+            "guests_count", "adults", "children", "infants",
+            "status", "currency",
+            "cancellation_policy_name", "cancellation_policy_snapshot",
             "promo_code", "special_requests",
             "expires_at", "confirmed_at", "cancelled_at",
             "checked_in_at", "completed_at",
-            "price", "guests", "status_history", "created_at",
+            "price", "guests", "events", "status_history", "created_at",
         ]
         read_only_fields = fields
 
@@ -122,21 +136,47 @@ class GuestDetailInputSerializer(serializers.Serializer):
     is_primary = serializers.BooleanField(default=False)
 
 
+class GuestBreakdownSerializer(serializers.Serializer):
+    """Guests: {adults, children, infants} — infants don't count toward cap."""
+    adults = serializers.IntegerField(min_value=0, default=1)
+    children = serializers.IntegerField(min_value=0, default=0)
+    infants = serializers.IntegerField(min_value=0, default=0)
+
+
 class BookingCreateSerializer(serializers.Serializer):
     property_id = serializers.UUIDField()
     check_in = serializers.DateField()
     check_out = serializers.DateField()
-    guests_count = serializers.IntegerField(min_value=1)
+    guests_count = serializers.IntegerField(
+        min_value=1, required=False,
+        help_text="Legacy — prefer the guests breakdown object.",
+    )
+    guests = GuestBreakdownSerializer(required=False)
+    guest_details = GuestDetailInputSerializer(many=True, required=False)
     promo_code = serializers.CharField(required=False, allow_blank=True, max_length=50)
     special_requests = serializers.CharField(required=False, allow_blank=True)
-    guests = GuestDetailInputSerializer(many=True, required=False)
 
     def validate(self, attrs):
         if attrs["check_in"] >= attrs["check_out"]:
             raise serializers.ValidationError("check_out must be after check_in.")
         if attrs["check_in"] < date.today():
             raise serializers.ValidationError("check_in cannot be in the past.")
+        if attrs.get("guests") is None and attrs.get("guests_count") is None:
+            raise serializers.ValidationError(
+                "Provide guests {adults, children, infants} or guests_count."
+            )
         return attrs
+
+
+class BookingNoteSerializer(serializers.ModelSerializer):
+    author_name = serializers.CharField(
+        source="author.full_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = BookingNote
+        fields = ["id", "body", "is_internal", "author_name", "created_at"]
+        read_only_fields = ["id", "author_name", "created_at"]
 
 
 class BookingQuoteSerializer(serializers.Serializer):

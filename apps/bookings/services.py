@@ -278,6 +278,7 @@ def confirm_booking(booking: Booking, changed_by=None, note: str = "") -> Bookin
         total_bookings=models_f("total_bookings") + 1
     )
 
+    _event(booking, "BOOKING_CONFIRMED", actor=changed_by, note=note)
     from apps.notifications.tasks import notify_booking_confirmed
 
     notify_booking_confirmed.delay(str(booking.id))
@@ -348,6 +349,7 @@ def expire_booking(booking: Booking) -> None:
         _transition(booking, Booking.Status.EXPIRED, note="Payment window expired")
         booking.save(update_fields=["status", "updated_at"])
         availability.release_dates(booking.property, booking.check_in, booking.check_out)
+        _event(booking, "BOOKING_EXPIRED")
         # Any still-open payment for this booking is dead.
         from apps.payments.models import Payment
 
@@ -372,6 +374,7 @@ def check_in(booking: Booking, changed_by) -> Booking:
     _transition(booking, Booking.Status.CHECKED_IN, changed_by)
     booking.checked_in_at = timezone.now()
     booking.save(update_fields=["status", "checked_in_at", "updated_at"])
+    _event(booking, "CHECKED_IN", actor=changed_by)
     return booking
 
 
@@ -382,6 +385,7 @@ def complete_booking(booking: Booking, changed_by=None) -> Booking:
     _transition(booking, Booking.Status.COMPLETED, changed_by)
     booking.completed_at = timezone.now()
     booking.save(update_fields=["status", "completed_at", "updated_at"])
+    _event(booking, "CHECKED_OUT", actor=changed_by)
 
     from apps.payouts.services import credit_host_for_booking
 

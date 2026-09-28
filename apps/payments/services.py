@@ -133,8 +133,9 @@ def initiate_payment(user, *, booking_id, provider_code: str,
 
     booking_services.mark_awaiting_payment(booking)
     booking_services._event(payment.booking, "PAYMENT_STARTED",
-                            actor=guest, data={"reference": payment.reference,
-                                               "amount": str(payment.amount)})
+                            actor=booking.guest,
+                            data={"reference": payment.reference,
+                                  "amount": str(payment.amount)})
     transaction.on_commit(
         lambda: notify_payment_pending.delay(str(payment.id))
     )
@@ -351,6 +352,10 @@ def initiate_refund(*, booking: Booking, amount: Decimal, reason: str,
                   else Refund.Status.PROCESSING)
     _transition_refund(refund, new_status, result.provider_reference, result.raw)
     _sync_payment_refund_state(payment)
+    booking_services._event(
+        booking, "REFUND_REQUESTED", actor=requested_by,
+        data={"amount": str(amount), "reason": reason},
+    )
     return refund
 
 
@@ -377,6 +382,10 @@ def _handle_refund_success(data) -> None:
     _transition_refund(refund, Refund.Status.SUCCESS, data.external_reference,
                        data.payload)
     _sync_payment_refund_state(refund.payment)
+    booking_services._event(
+        refund.booking, "REFUND_COMPLETED",
+        data={"amount": str(refund.amount)},
+    )
 
 
 @transaction.atomic
