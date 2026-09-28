@@ -1,6 +1,8 @@
 """Payment serializers — internal fields stay server-side."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import Payment, PaymentProvider, PaymentTransaction, Refund
@@ -51,5 +53,6 @@ class RefundSerializer(serializers.ModelSerializer):
 
 class RefundCreateSerializer(serializers.Serializer):
     payment_id = serializers.UUIDField()
-    amount = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=0)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2,
+                                      min_value=Decimal("0.01"))
     reason = serializers.CharField(required=False, allow_blank=True)

@@ -63,6 +63,7 @@ class DisputeDetailView(generics.RetrieveAPIView):
 
 class DisputeMessageView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = DisputeMessageCreateSerializer
 
     def post(self, request, pk):
         dispute = services.get_dispute_for_user(request.user, pk)
@@ -78,6 +79,7 @@ class DisputeMessageView(APIView):
 class DisputeEvidenceView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    serializer_class = DisputeEvidenceSerializer
 
     def post(self, request, pk):
         dispute = services.get_dispute_for_user(request.user, pk)

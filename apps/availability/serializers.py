@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from rest_framework import serializers
 
@@ -20,7 +21,8 @@ class BlockDatesSerializer(DateRangeSerializer):
 
 
 class DatePricingSerializer(DateRangeSerializer):
-    price = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=0)
+    price = serializers.DecimalField(max_digits=12, decimal_places=2,
+                                     min_value=Decimal("0"))
     min_nights = serializers.IntegerField(min_value=1, required=False, allow_null=True)
 
 

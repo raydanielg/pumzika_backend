@@ -90,6 +90,7 @@ class LogoutView(APIView):
 class EmailVerifySendView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [StrictAuthRateThrottle]
+    serializer_class = VerifyCodeSerializer  # docs only; request body is empty
 
     def post(self, request):
         services.send_email_verification(request.user)
@@ -190,6 +191,7 @@ class MeView(generics.RetrieveUpdateAPIView):
 
 class MeDeactivateView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = AccountDeleteSerializer
 
     def post(self, request):
         services.deactivate_account(request.user)

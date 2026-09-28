@@ -45,6 +45,7 @@ class MyKYCDocumentView(APIView):
     permission_classes = [IsAuthenticated, PermissionRequired]
     required_permissions = (KYC_SUBMIT,)
     parser_classes = [MultiPartParser, FormParser]
+    serializer_class = KYCDocumentUploadSerializer
 
     def post(self, request):
         serializer = KYCDocumentUploadSerializer(data=request.data)
@@ -68,6 +69,7 @@ class MyKYCDocumentListView(generics.ListAPIView):
 class MyKYCSubmitView(APIView):
     permission_classes = [IsAuthenticated, PermissionRequired]
     required_permissions = (KYC_SUBMIT,)
+    serializer_class = KYCVerificationSerializer
 
     def post(self, request):
         verification = services.submit_for_review(request.user)

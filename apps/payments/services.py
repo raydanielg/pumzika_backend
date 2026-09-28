@@ -44,7 +44,7 @@ def _record_transaction(payment: Payment, event_type: str, to_status: str,
     PaymentTransaction.objects.create(
         payment=payment, event_type=event_type,
         from_status=payment.status, to_status=to_status,
-        provider_reference=provider_reference, raw=raw or {},
+        provider_reference=provider_reference or "", raw=raw or {},
     )
 
 

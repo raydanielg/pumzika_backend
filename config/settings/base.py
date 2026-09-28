@@ -231,6 +231,10 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 10
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TASK_ALWAYS_EAGER = env_bool(
+    "CELERY_TASK_ALWAYS_EAGER", "test" in sys.argv
+)
+CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BEAT_SCHEDULE = {
     "expire-unpaid-bookings": {
         "task": "apps.bookings.tasks.expire_unpaid_bookings",
@@ -285,10 +289,16 @@ REST_FRAMEWORK = {
         "webhook": "600/minute",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.NamespaceVersioning",
-    "ALLOWED_VERSIONS": ("v1",),
-    "DEFAULT_VERSION": "v1",
+    # API versioning is expressed in the URL path (/api/v1/). A future v2
+    # mounts a second include without touching v1.
 }
+
+if "test" in sys.argv:
+    # Rate limiting is exercised manually — leave requests unthrottled in tests.
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = ()
+    CACHES["default"] = {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache"
+    }
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Pumzika Africa API",

@@ -46,6 +46,7 @@ from .services import audit
 class DashboardView(APIView):
     permission_classes = [IsAuthenticated, PermissionRequired]
     required_permissions = (perms.ANALYTICS_VIEW,)
+    serializer_class = PlatformSettingSerializer  # docs hint only
 
     def get(self, request):
         return Response(dashboard_metrics())
@@ -164,6 +165,7 @@ class PendingPropertiesView(generics.ListAPIView):
 class PropertyApproveView(APIView):
     permission_classes = [IsAuthenticated, PermissionRequired]
     required_permissions = (perms.PROPERTY_APPROVE,)
+    serializer_class = PropertyModerationSerializer
 
     def post(self, request, pk):
         prop = Property.objects.filter(pk=pk).first()

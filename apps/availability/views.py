@@ -38,6 +38,7 @@ class CalendarView(APIView):
     """Public calendar — guests see busy/free days to plan a stay."""
 
     permission_classes = [AllowAny]
+    serializer_class = CalendarDaySerializer
 
     def get(self, request, property_id):
         prop = _get_property_for_calendar(property_id)
@@ -52,6 +53,8 @@ class CalendarView(APIView):
 
 
 class BlockDatesView(APIView):
+    serializer_class = BlockDatesSerializer
+
     def post(self, request, property_id):
         prop = _get_host_property(request, property_id)
         serializer = BlockDatesSerializer(data=request.data)
@@ -66,6 +69,8 @@ class BlockDatesView(APIView):
 
 
 class UnblockDatesView(APIView):
+    serializer_class = DateRangeSerializer
+
     def post(self, request, property_id):
         prop = _get_host_property(request, property_id)
         serializer = DateRangeSerializer(data=request.data)
@@ -79,6 +84,8 @@ class UnblockDatesView(APIView):
 
 
 class DatePricingView(APIView):
+    serializer_class = DatePricingSerializer
+
     def post(self, request, property_id):
         prop = _get_host_property(request, property_id)
         serializer = DatePricingSerializer(data=request.data)

@@ -88,6 +88,7 @@ class SendMessageView(APIView):
 
 class MarkReadView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = SendMessageSerializer
 
     def post(self, request, pk):
         services.mark_read(request.user, pk)

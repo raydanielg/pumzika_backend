@@ -14,3 +14,4 @@ gunicorn>=22.0,<23.0
 django-cors-headers>=4.3,<5.0
 python-dotenv>=1.0,<2.0
 phonenumbers>=8.13,<9.0
+argon2-cffi>=23.1,<24.0

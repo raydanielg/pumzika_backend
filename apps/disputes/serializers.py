@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import (
@@ -71,7 +73,7 @@ class DisputeResolveSerializer(serializers.Serializer):
     outcome = serializers.ChoiceField(choices=DisputeResolution.Outcome.choices)
     notes = serializers.CharField(required=False, allow_blank=True)
     refund_amount = serializers.DecimalField(max_digits=14, decimal_places=2,
-                                             default=0, min_value=0)
+                                             default=0, min_value=Decimal("0"))
 
 
 class DisputeStatusUpdateSerializer(serializers.Serializer):

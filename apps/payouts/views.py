@@ -25,6 +25,7 @@ from .serializers import (
 
 class MyWalletView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = WalletSerializer
 
     def get(self, request):
         return Response(WalletSerializer(services.get_wallet(request.user)).data)

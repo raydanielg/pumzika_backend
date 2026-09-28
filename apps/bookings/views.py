@@ -58,9 +58,10 @@ class BookingViewSet(viewsets.GenericViewSet,
     def get_serializer_class(self):
         if self.action == "create":
             return BookingCreateSerializer
+        user = getattr(self.request, "user", None)
         obj = getattr(self, "_obj", None)
-        if self.request.user.is_staff_role or (
-            obj and obj.property.host_id == self.request.user.id
+        if getattr(user, "is_staff_role", False) or (
+            obj and obj.property.host_id == getattr(user, "id", None)
         ):
             return HostBookingSerializer
         return BookingSerializer
@@ -127,6 +128,7 @@ class BookingQuoteView(APIView):
     """Price preview — computed on the backend, never trusted from the client."""
 
     permission_classes = [IsAuthenticated]
+    serializer_class = BookingQuoteSerializer
 
     def post(self, request):
         serializer = BookingQuoteSerializer(data=request.data)

@@ -93,6 +93,7 @@ class ProviderWebhookView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     throttle_classes = [WebhookRateThrottle]
+    serializer_class = PaymentSerializer  # docs hint only
 
     def post(self, request, provider: str):
         headers = {k.lower().replace("http_", "").replace("_", "-"): v

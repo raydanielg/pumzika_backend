@@ -33,6 +33,7 @@ class NotificationDetailView(generics.RetrieveAPIView):
 
 class MarkReadView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSerializer
 
     def post(self, request, pk=None):
         qs = request.user.notifications.filter(read_at__isnull=True)
@@ -44,6 +45,7 @@ class MarkReadView(APIView):
 
 class UnreadCountView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSerializer
 
     def get(self, request):
         count = request.user.notifications.filter(read_at__isnull=True).count()
@@ -52,6 +54,7 @@ class UnreadCountView(APIView):
 
 class PreferenceListUpdateView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = NotificationPreferenceSerializer
 
     def get(self, request):
         prefs = NotificationPreference.objects.filter(user=request.user)

@@ -1,4 +1,8 @@
+from decimal import Decimal
+
 from rest_framework import serializers
+
+_ZERO = Decimal("0")
 
 
 class SearchParamsSerializer(serializers.Serializer):
@@ -13,22 +17,22 @@ class SearchParamsSerializer(serializers.Serializer):
     longitude = serializers.DecimalField(max_digits=9, decimal_places=6,
                                          required=False)
     radius = serializers.DecimalField(max_digits=6, decimal_places=2,
-                                      required=False, min_value=0)
+                                      required=False, min_value=_ZERO)
     check_in = serializers.DateField(required=False)
     check_out = serializers.DateField(required=False)
     guests = serializers.IntegerField(min_value=1, required=False)
     bedrooms = serializers.IntegerField(min_value=0, required=False)
     bathrooms = serializers.DecimalField(max_digits=3, decimal_places=1,
-                                         min_value=0, required=False)
+                                         min_value=_ZERO, required=False)
     property_type = serializers.IntegerField(required=False)
     amenities = serializers.ListField(child=serializers.IntegerField(),
                                       required=False)
     min_price = serializers.DecimalField(max_digits=12, decimal_places=2,
-                                         min_value=0, required=False)
+                                         min_value=_ZERO, required=False)
     max_price = serializers.DecimalField(max_digits=12, decimal_places=2,
-                                         min_value=0, required=False)
+                                         min_value=_ZERO, required=False)
     min_rating = serializers.DecimalField(max_digits=3, decimal_places=2,
-                                          min_value=0, max_value=5,
+                                          min_value=_ZERO, max_value=Decimal("5"),
                                           required=False)
     verified_host = serializers.BooleanField(required=False)
     sort = serializers.ChoiceField(

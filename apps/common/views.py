@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from django.core.cache import cache
 from django.db import connection
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 
+@extend_schema(exclude=True)
 class HealthView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -16,6 +18,7 @@ class HealthView(APIView):
         return Response({"status": "ok"})
 
 
+@extend_schema(exclude=True)
 class HealthDBView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -29,6 +32,7 @@ class HealthDBView(APIView):
             return Response({"database": "error"}, status=503)
 
 
+@extend_schema(exclude=True)
 class HealthRedisView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []

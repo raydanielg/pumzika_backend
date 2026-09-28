@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import generics, status
+from rest_framework import generics, serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -30,6 +30,8 @@ class PropertyReviewListView(generics.ListAPIView):
     serializer_class = PropertyReviewSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return PropertyReview.objects.none()
         return (
             PropertyReview.objects.filter(
                 property_id=self.kwargs["property_id"], is_published=True
@@ -103,14 +105,21 @@ class HostReviewsView(generics.ListAPIView):
     serializer_class = HostReviewSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return HostReview.objects.none()
         return HostReview.objects.filter(
             host_id=self.kwargs["host_id"], is_published=True
         ).select_related("reviewer").order_by("-created_at")
 
 
+class ReviewModerateSerializer(serializers.Serializer):
+    publish = serializers.BooleanField(default=True)
+
+
 class ModerateReviewView(APIView):
     permission_classes = [IsAuthenticated, PermissionRequired]
     required_permissions = (REVIEW_MODERATE,)
+    serializer_class = ReviewModerateSerializer
 
     def post(self, request, review_type, pk):
         model_map = {

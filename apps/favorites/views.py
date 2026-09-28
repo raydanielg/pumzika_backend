@@ -44,6 +44,7 @@ class FavoriteAddView(APIView):
 
 class FavoriteRemoveView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = FavoriteCreateSerializer
 
     def delete(self, request, property_id):
         Favorite.objects.filter(user=request.user, property_id=property_id).delete()
@@ -52,6 +53,7 @@ class FavoriteRemoveView(APIView):
 
 class FavoriteCheckView(APIView):
     permission_classes = [IsAuthenticated]
+    serializer_class = FavoriteCreateSerializer
 
     def get(self, request, property_id):
         exists = Favorite.objects.filter(
