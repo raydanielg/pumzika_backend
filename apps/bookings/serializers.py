@@ -1,0 +1,129 @@
+"""Booking serializers."""
+from __future__ import annotations
+
+from datetime import date
+
+from rest_framework import serializers
+
+from .models import (
+    Booking,
+    BookingCancellation,
+    BookingGuest,
+    BookingPrice,
+    BookingStatusHistory,
+    CancellationPolicy,
+    CancellationRule,
+)
+
+
+class CancellationRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CancellationRule
+        fields = ["hours_before_check_in", "guest_refund_percent", "refund_service_fee"]
+
+
+class CancellationPolicySerializer(serializers.ModelSerializer):
+    rules = CancellationRuleSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CancellationPolicy
+        fields = ["id", "name", "code", "description", "rules"]
+        read_only_fields = ["id"]
+
+
+class BookingGuestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BookingGuest
+        fields = ["first_name", "last_name", "is_primary"]
+
+
+class BookingPriceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BookingPrice
+        fields = [
+            "currency", "nights", "nightly_subtotal", "cleaning_fee",
+            "service_fee", "tax", "discount", "total",
+            "nightly_detail",
+        ]
+        # commission/host payout are internal — see HostBookingPriceSerializer
+
+
+class HostBookingPriceSerializer(BookingPriceSerializer):
+    """Hosts see the commission math; guests do not."""
+
+    class Meta(BookingPriceSerializer.Meta):
+        fields = BookingPriceSerializer.Meta.fields + [
+            "commission_rate", "commission_amount", "host_payout_amount",
+        ]
+
+
+class BookingStatusHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BookingStatusHistory
+        fields = ["from_status", "to_status", "note", "created_at"]
+
+
+class BookingCancellationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BookingCancellation
+        fields = ["reason", "cancelled_at", "refund_amount", "host_amount"]
+
+
+class BookingSerializer(serializers.ModelSerializer):
+    price = BookingPriceSerializer(read_only=True)
+    guests = BookingGuestSerializer(many=True, read_only=True)
+    property_title = serializers.CharField(source="property.title", read_only=True)
+    property_city = serializers.CharField(source="property.city.name", read_only=True)
+    guest_email = serializers.EmailField(source="guest.email", read_only=True)
+    status_history = BookingStatusHistorySerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Booking
+        fields = [
+            "id", "reference", "guest", "guest_email", "property",
+            "property_title", "property_city",
+            "check_in", "check_out", "guests_count", "status", "currency",
+            "promo_code", "special_requests",
+            "expires_at", "confirmed_at", "cancelled_at",
+            "checked_in_at", "completed_at",
+            "price", "guests", "status_history", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class HostBookingSerializer(BookingSerializer):
+    price = HostBookingPriceSerializer(read_only=True)
+
+
+class GuestDetailInputSerializer(serializers.Serializer):
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    is_primary = serializers.BooleanField(default=False)
+
+
+class BookingCreateSerializer(serializers.Serializer):
+    property_id = serializers.UUIDField()
+    check_in = serializers.DateField()
+    check_out = serializers.DateField()
+    guests_count = serializers.IntegerField(min_value=1)
+    promo_code = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    special_requests = serializers.CharField(required=False, allow_blank=True)
+    guests = GuestDetailInputSerializer(many=True, required=False)
+
+    def validate(self, attrs):
+        if attrs["check_in"] >= attrs["check_out"]:
+            raise serializers.ValidationError("check_out must be after check_in.")
+        if attrs["check_in"] < date.today():
+            raise serializers.ValidationError("check_in cannot be in the past.")
+        return attrs
+
+
+class BookingQuoteSerializer(serializers.Serializer):
+    property_id = serializers.UUIDField()
+    check_in = serializers.DateField()
+    check_out = serializers.DateField()
+    promo_code = serializers.CharField(required=False, allow_blank=True, max_length=50)
+
+
+class CancelBookingSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True)
