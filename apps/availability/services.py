@@ -135,11 +135,22 @@ def mark_dates_booked(prop: Property, check_in: date, check_out: date,
 
 @transaction.atomic
 def release_dates(prop: Property, check_in: date, check_out: date,
-                  unit=None) -> None:
+                  unit=None, booking=None) -> None:
     """Free BOOKED rows when a booking is cancelled."""
-    AvailabilityDate.objects.filter(
-        booking__property=prop if False else models.F("pk"),  # placeholder
+    qs = AvailabilityDate.objects.filter(
+        property=prop,
+        date__gte=check_in,
+        date__lt=check_out,
+        status=AvailabilityStatus.BOOKED,
+        booking__isnull=False,
     )
+    if booking is not None:
+        # Release only this booking's rows — other bookings on a
+        # quantity>1 unit keep theirs.
+        qs = qs.filter(booking=booking)
+    else:
+        qs = qs.filter(unit=unit)
+    qs.delete()
 
 
 @transaction.atomic
@@ -239,8 +250,16 @@ def get_calendar(prop: Property, start: date, end: date, unit=None) -> list[dict
     qs = AvailabilityDate.objects.filter(
         property=prop, date__gte=start, date__lt=end
     )
+    booked_counts = {}
     if unit is not None:
-        qs = qs.filter(models.Q(unit=unit) | models.Q(unit__isnull=True))
+        booked_counts = {
+            r["date"]: r["n"]
+            for r in qs.filter(unit=unit, booking__isnull=False)
+                       .values("date").annotate(n=models.Count("id"))
+        }
+        qs = qs.filter(
+            models.Q(unit=unit, booking__isnull=True) | models.Q(unit__isnull=True)
+        )
     else:
         qs = qs.filter(unit__isnull=True)
     # Unit rows take precedence over property-level rows for the same date.
@@ -253,10 +272,13 @@ def get_calendar(prop: Property, start: date, end: date, unit=None) -> list[dict
     calendar = []
     for day in daterange(start, end):
         record = records.get(day)
+        status = record.status if record else AvailabilityStatus.AVAILABLE
+        if unit is not None and status == AvailabilityStatus.AVAILABLE                 and booked_counts.get(day, 0) >= unit.quantity:
+            status = AvailabilityStatus.BOOKED
         calendar.append(
             {
                 "date": day.isoformat(),
-                "status": record.status if record else AvailabilityStatus.AVAILABLE,
+                "status": status,
                 "price": str(prices[day]),
                 "min_nights": (record.min_nights_override if record else None)
                 or prop.min_nights,

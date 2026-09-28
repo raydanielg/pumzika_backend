@@ -101,7 +101,8 @@ class UnitBookingTests(BaseTestCase):
         assert not AvailabilityDate.objects.filter(unit=unit_b).exists()
 
     def test_unit_double_booking_rejected(self):
-        unit = self._unit()
+        # quantity=1 — second identical booking must fail
+        unit = self._unit(quantity=1)
         booking_services.create_booking(
             self.guest, property_id=self.property.id,
             check_in=self.check_in, check_out=self.check_out,
@@ -115,7 +116,47 @@ class UnitBookingTests(BaseTestCase):
             )
             assert False, "should have raised"
         except BusinessError as e:
-            assert e.code == "PROPERTY_NOT_AVAILABLE"
+            assert e.code == "UNIT_NOT_AVAILABLE"
+
+    def test_quantity_greater_than_one_sells_multiple(self):
+        # quantity=2 — two bookings fit, the third is rejected
+        unit = self._unit(quantity=2)
+        third_guest = type(self.guest).objects.create_user(
+            email="g3@test.dev", password="Pass1234!",
+            role=self.guest.Role.GUEST, is_email_verified=True,
+        )
+        for guest in (self.guest, self.other_guest):
+            booking_services.create_booking(
+                guest, property_id=self.property.id,
+                check_in=self.check_in, check_out=self.check_out,
+                guests_count=1, unit_id=unit.id,
+            )
+        try:
+            booking_services.create_booking(
+                third_guest, property_id=self.property.id,
+                check_in=self.check_in, check_out=self.check_out,
+                guests_count=1, unit_id=unit.id,
+            )
+            assert False, "should have raised"
+        except BusinessError as e:
+            assert e.code == "UNIT_NOT_AVAILABLE"
+
+    def test_cancel_releases_only_that_booking(self):
+        unit = self._unit(quantity=2)
+        booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out,
+            guests_count=1, unit_id=unit.id,
+        )
+        second = booking_services.create_booking(
+            self.other_guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out,
+            guests_count=1, unit_id=unit.id,
+        )
+        booking_services.cancel_booking(second, self.other_guest, "changed plans")
+        # first booking's nights are still held
+        assert AvailabilityDate.objects.filter(
+            unit=unit, status=AvailabilityStatus.BOOKED).count() == 3
 
     def test_unit_capacity_enforced(self):
         unit = self._unit(max_guests=1)

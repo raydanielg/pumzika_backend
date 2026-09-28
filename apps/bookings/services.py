@@ -343,7 +343,7 @@ def cancel_booking(booking: Booking, cancelled_by, reason: str = "") -> Booking:
         host_amount=result.host_amount,
         policy_snapshot=booking.cancellation_policy_snapshot,
     )
-    availability.release_dates(booking.property, booking.check_in, booking.check_out, unit=booking.unit)
+    availability.release_dates(booking.property, booking.check_in, booking.check_out, unit=booking.unit, booking=booking)
 
     # Money only moves if a payment was actually captured.
     if result.refund_amount > 0:
@@ -367,7 +367,7 @@ def expire_booking(booking: Booking) -> None:
     if booking.status in (Booking.Status.PENDING, Booking.Status.AWAITING_PAYMENT):
         _transition(booking, Booking.Status.EXPIRED, note="Payment window expired")
         booking.save(update_fields=["status", "updated_at"])
-        availability.release_dates(booking.property, booking.check_in, booking.check_out, unit=booking.unit)
+        availability.release_dates(booking.property, booking.check_in, booking.check_out, unit=booking.unit, booking=booking)
         _event(booking, "BOOKING_EXPIRED")
         # Any still-open payment for this booking is dead.
         from apps.payments.models import Payment
