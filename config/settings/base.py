@@ -231,6 +231,24 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 10
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BEAT_SCHEDULE = {
+    "expire-unpaid-bookings": {
+        "task": "apps.bookings.tasks.expire_unpaid_bookings",
+        "schedule": 60.0,
+    },
+    "checkin-reminders": {
+        "task": "apps.bookings.tasks.send_checkin_reminders",
+        "schedule": 60 * 60 * 6,  # every 6h
+    },
+    "checkout-reminders": {
+        "task": "apps.bookings.tasks.send_checkout_reminders",
+        "schedule": 60 * 60 * 6,
+    },
+    "review-reminders": {
+        "task": "apps.bookings.tasks.send_review_reminders",
+        "schedule": 60 * 60 * 6,
+    },
+}
 
 # --------------------------------------------------------------------------
 # DRF
