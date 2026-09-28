@@ -94,7 +94,13 @@ def initiate_payment(user, *, booking_id, provider_code: str,
     booking_qs = Booking.objects.select_for_update().select_related(
         "price", "property", "guest"
     )
-    booking = booking_qs.filter(pk=booking_id).first()
+    import uuid as _uuid
+
+    try:
+        _uuid.UUID(str(booking_id))
+        booking = booking_qs.filter(pk=booking_id).first()
+    except (ValueError, AttributeError, TypeError):
+        booking = None
     if booking is None:
         booking = booking_qs.filter(reference=str(booking_id)).first()
     if booking is None:
