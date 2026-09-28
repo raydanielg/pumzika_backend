@@ -75,6 +75,7 @@ class AccountStatusMiddleware:
             )
         # last_seen activity heartbeat — at most one write per 5 minutes.
         if user is not None and user.is_authenticated:
+            from django.contrib.auth import get_user_model
             from django.utils import timezone as _tz
 
             now = _tz.now()
@@ -82,7 +83,7 @@ class AccountStatusMiddleware:
                 user.last_seen_at is None
                 or (now - user.last_seen_at).total_seconds() > 300
             ):
-                type(user).objects.filter(pk=user.pk).update(
+                get_user_model().objects.filter(pk=user.pk).update(
                     last_seen_at=now
                 )
         return self.get_response(request)
