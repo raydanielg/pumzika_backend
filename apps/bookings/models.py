@@ -122,6 +122,10 @@ class Booking(UUIDModel):
 
     promo_code = models.CharField(max_length=50, blank=True)
     special_requests = models.TextField(blank=True)
+    idempotency_key = models.CharField(
+        max_length=64, null=True, blank=True, unique=True,
+        help_text="Client-supplied Idempotency-Key; retries return the same booking",
+    )
 
     class Meta:
         indexes = [

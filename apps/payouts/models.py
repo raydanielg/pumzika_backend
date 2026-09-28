@@ -16,6 +16,10 @@ class HostWallet(TimeStampedModel):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="wallet"
     )
     balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pending_balance = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0,
+        help_text="Funds held by open payout requests",
+    )
     currency = models.CharField(max_length=3, default="TZS")
     total_earned = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     total_paid_out = models.DecimalField(max_digits=14, decimal_places=2, default=0)
@@ -115,6 +119,9 @@ class Payout(UUIDModel):
     )
     rejection_reason = models.TextField(blank=True)
     external_reference = models.CharField(max_length=128, blank=True)
+    idempotency_key = models.CharField(
+        max_length=64, null=True, blank=True, unique=True,
+    )
 
     class Meta:
         indexes = [models.Index(fields=["status", "-requested_at"]),

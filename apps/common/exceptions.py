@@ -78,6 +78,7 @@ def _error_response(
     return Response(
         {
             "success": False,
+            "message": message,
             "error": error,
             "request_id": _request_id(request),
         },

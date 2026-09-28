@@ -80,6 +80,7 @@ class BookingViewSet(viewsets.GenericViewSet,
         data = serializer.validated_data
         booking = services.create_booking(
             request.user,
+            idempotency_key=request.headers.get("Idempotency-Key"),
             property_id=data["property_id"],
             check_in=data["check_in"],
             check_out=data["check_out"],

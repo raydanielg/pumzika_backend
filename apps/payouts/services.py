@@ -4,7 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Sum
 from django.utils import timezone
 
 from apps.admin_panel.models import PlatformSetting
@@ -77,8 +77,15 @@ def credit_host_for_booking(booking) -> WalletTransaction | None:
 
 
 @transaction.atomic
-def request_payout(user, method_id, amount: Decimal) -> Payout:
+def request_payout(user, method_id, amount: Decimal,
+                   idempotency_key: str | None = None) -> Payout:
     wallet = get_wallet(user)
+    if idempotency_key:
+        existing = Payout.objects.filter(
+            idempotency_key=idempotency_key, user=user
+        ).first()
+        if existing is not None:
+            return existing
     method = PayoutMethod.objects.filter(
         pk=method_id, user=user, is_active=True
     ).first()
@@ -101,12 +108,16 @@ def request_payout(user, method_id, amount: Decimal) -> Payout:
 
     payout = Payout.objects.create(
         user=user, method=method, amount=amount, currency=wallet.currency,
-        reference=generate_reference("POT"),
+        reference=generate_reference("POT"), idempotency_key=idempotency_key or None,
     )
-    # Funds are debited immediately and held until the payout resolves;
-    # a rejection posts a REVERSAL credit — the ledger stays append-only.
+    # Funds are debited immediately and held as pending until the payout
+    # resolves; a rejection posts a REVERSAL credit — the ledger stays
+    # append-only.
     _post(wallet.id, WalletTransaction.Type.PAYOUT, -amount,
           description=f"Payout request {payout.reference}", payout=payout)
+    HostWallet.objects.filter(pk=wallet.id).update(
+        pending_balance=F("pending_balance") + amount
+    )
     return payout
 
 
@@ -120,10 +131,14 @@ def process_payout(admin_user, payout_id, approve: bool, reason: str = "") -> Pa
 
     payout.processed_by = admin_user
     payout.processed_at = timezone.now()
+    wallet = get_wallet(payout.user)
     if approve:
         payout.status = Payout.Status.COMPLETED
         payout.save(update_fields=["status", "processed_by", "processed_at",
                                    "updated_at"])
+        HostWallet.objects.filter(pk=wallet.id).update(
+            pending_balance=F("pending_balance") - payout.amount
+        )
         from apps.notifications.tasks import notify_payout_completed
 
         notify_payout_completed.delay(str(payout.id))
@@ -132,10 +147,39 @@ def process_payout(admin_user, payout_id, approve: bool, reason: str = "") -> Pa
         payout.rejection_reason = reason
         payout.save(update_fields=["status", "rejection_reason", "processed_by",
                                    "processed_at", "updated_at"])
-        wallet = get_wallet(payout.user)
+        HostWallet.objects.filter(pk=wallet.id).update(
+            pending_balance=F("pending_balance") - payout.amount
+        )
         _post(wallet.id, WalletTransaction.Type.REVERSAL, payout.amount,
               description=f"Reversal of payout {payout.reference}", payout=payout)
     audit(actor=admin_user,
           action=f"payout.{'approved' if approve else 'rejected'}",
-          target=payout)
+          target=payout, metadata={"reason": reason} if reason else None)
     return payout
+
+
+def reconcile_wallet(user) -> dict:
+    """Recompute balances from the ledger — the source of truth.
+
+    ``balance`` must equal the latest transaction's ``balance_after``;
+    ``pending_balance`` must equal open payouts. Any drift is corrected.
+    """
+    with transaction.atomic():
+        wallet = HostWallet.objects.select_for_update().get(
+            pk=get_wallet(user).pk
+        )
+        last_txn = wallet.transactions.order_by("-created_at").first()
+        ledger_balance = last_txn.balance_after if last_txn else Decimal("0")
+        open_payouts = Payout.objects.filter(
+            user=user, status__in=[Payout.Status.PENDING, Payout.Status.PROCESSING]
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        drift = wallet.balance != ledger_balance or wallet.pending_balance != open_payouts
+        if drift:
+            wallet.balance = ledger_balance
+            wallet.pending_balance = open_payouts
+            wallet.save(update_fields=["balance", "pending_balance", "updated_at"])
+        return {
+            "balance": str(wallet.balance),
+            "pending_balance": str(wallet.pending_balance),
+            "drift_corrected": drift,
+        }

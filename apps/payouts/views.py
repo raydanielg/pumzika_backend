@@ -83,6 +83,7 @@ class RequestPayoutView(APIView):
             request.user,
             serializer.validated_data["method_id"],
             serializer.validated_data["amount"],
+            idempotency_key=request.headers.get("Idempotency-Key"),
         )
         audit(actor=request.user, action="payout.requested",
               target=payout, request=request)

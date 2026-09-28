@@ -89,8 +89,18 @@ def quote_for_property(prop: Property, check_in: date, check_out: date,
 def create_booking(guest, *, property_id, check_in: date, check_out: date,
                    guests_count: int, promo_code: str = "",
                    special_requests: str = "", guest_details: list | None = None,
-                   request=None) -> Booking:
-    """Create a PENDING booking and lock the dates atomically."""
+                   idempotency_key: str | None = None, request=None) -> Booking:
+    """Create a PENDING booking and lock the dates atomically.
+
+    Idempotent: a repeated Idempotency-Key returns the original booking
+    instead of creating a duplicate.
+    """
+    if idempotency_key:
+        existing = Booking.objects.filter(
+            idempotency_key=idempotency_key, guest=guest
+        ).first()
+        if existing is not None:
+            return existing
     prop = (
         Property.objects.select_for_update()
         .select_related("host__host_profile", "country", "property_type")
@@ -143,6 +153,7 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
         expires_at=booking_payment_deadline(),
         promo_code=promo.code if promo else "",
         special_requests=special_requests,
+        idempotency_key=idempotency_key or None,
     )
     BookingPrice.objects.create(
         booking=booking,

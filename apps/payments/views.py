@@ -48,7 +48,8 @@ class InitiatePaymentView(APIView):
             request.user,
             booking_id=serializer.validated_data["booking_id"],
             provider_code=serializer.validated_data["provider"],
-            idempotency_key=serializer.validated_data["idempotency_key"],
+            idempotency_key=serializer.validated_data["idempotency_key"]
+            or request.headers.get("Idempotency-Key"),
             method_details=serializer.validated_data.get("method_details"),
         )
         audit(actor=request.user, action="payment.initiated",

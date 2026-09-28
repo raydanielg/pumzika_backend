@@ -39,7 +39,10 @@ class PaymentSerializer(serializers.ModelSerializer):
 class PaymentInitiateSerializer(serializers.Serializer):
     booking_id = serializers.UUIDField()
     provider = serializers.CharField(max_length=20)
-    idempotency_key = serializers.CharField(max_length=64)
+    idempotency_key = serializers.CharField(
+        max_length=64, required=False, default="",
+        help_text="May also be supplied via the Idempotency-Key header",
+    )
     method_details = serializers.DictField(required=False)
 
 
