@@ -91,6 +91,9 @@ def review_verification(reviewer, verification_id, decision: str, reason: str = 
     if verification.status != KYCStatus.UNDER_REVIEW:
         raise BusinessError("This verification has already been decided.",
                             code="KYC_ALREADY_DECIDED")
+    if decision == KYCReview.Decision.REJECTED and not reason.strip():
+        raise BusinessError("A rejection reason is required.",
+                            code="REASON_REQUIRED")
 
     profile = verification.profile
     KYCReview.objects.create(

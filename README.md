@@ -85,6 +85,7 @@ createdb pumzika                # or set DATABASE_URL in .env
 
 python manage.py migrate
 python manage.py seed_dev       # TZ data, amenities, policies, dev users
+python manage.py seed_demo      # the above + 3 published demo listings
 python manage.py runserver
 ```
 
@@ -106,10 +107,39 @@ celery -A config beat   --loglevel=info   # expiry sweeps + reminders
 ### Tests
 
 ```bash
-python manage.py test tests
+python manage.py test tests          # 68 tests: bookings, payments, KYC, ...
 python manage.py check
 python manage.py makemigrations --check   # verify no model drift
 ```
+
+### Idempotency
+
+`POST /api/v1/bookings/`, `POST /api/v1/payments/initiate/`,
+`POST /api/v1/payouts/` and `POST /api/v1/payments/refunds/create/` accept an
+`Idempotency-Key` header — a retried request returns the original record
+rather than creating a duplicate.
+
+### Property moderation
+
+`DRAFT → SUBMITTED → UNDER_REVIEW → APPROVED → PUBLISHED` — hosts submit
+(`POST /api/v1/properties/{id}/submit_review/`), staff approve/reject via
+`/api/v1/admin/properties/{id}/approve|reject|suspend/`, and hosts publish
+with `POST /api/v1/properties/{id}/publish/`. A rejected/suspended action
+requires a `reason`. Submission returns field-level errors
+(`PROPERTY_INCOMPLETE.details`).
+
+### Location privacy
+
+Public listings expose `approximate_latitude`/`approximate_longitude`
+(~1 km rounding) and no street address. The exact `address` + coordinates
+appear on a booking only once it reaches `CONFIRMED`.
+
+### Devices & sessions
+
+`POST /api/v1/notifications/devices/` registers a push device (users can have
+many). `GET /api/v1/users/me/sessions/` lists active login sessions;
+`POST /api/v1/users/me/sessions/revoke-all/` or
+`…/sessions/<jti>/revoke/` revokes them.
 
 ### API docs
 
