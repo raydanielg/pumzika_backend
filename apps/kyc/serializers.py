@@ -1,6 +1,7 @@
 """KYC serializers — document files are never exposed in public payloads."""
 from __future__ import annotations
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import KYCDocument, KYCProfile, KYCStatusHistory, KYCVerification
@@ -50,6 +51,7 @@ class KYCVerificationSerializer(serializers.ModelSerializer):
         fields = ["id", "status", "submitted_at", "completed_at", "notes",
                   "documents"]
 
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_documents(self, obj):
         # Only rendered for owner/staff views.
         return KYCDocumentSerializer(obj.profile.documents.all(), many=True).data

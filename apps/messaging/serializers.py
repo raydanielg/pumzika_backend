@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Conversation, Message, MessageAttachment
@@ -32,16 +33,19 @@ class ConversationSerializer(serializers.ModelSerializer):
         fields = ["id", "property", "property_title", "booking", "subject",
                   "participants", "last_message", "unread_count", "created_at"]
 
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_participants(self, obj):
         return [
             {"id": str(p.user_id), "name": p.user.full_name}
             for p in obj.participants.select_related("user")
         ]
 
+    @extend_schema_field(serializers.DictField(allow_null=True))
     def get_last_message(self, obj):
         msg = obj.messages.last()
         return MessageSerializer(msg).data if msg else None
 
+    @extend_schema_field(serializers.IntegerField())
     def get_unread_count(self, obj):
         user = self.context["request"].user
         participant = obj.participants.filter(user=user).first()

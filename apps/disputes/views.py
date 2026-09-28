@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.schema import schema_empty_queryset
 from apps.accounts.constants import DISPUTE_MANAGE
 from apps.common.permissions import PermissionRequired
 from apps.admin_panel.services import audit
@@ -30,6 +31,8 @@ class MyDisputesView(generics.ListAPIView):
     serializer_class = DisputeSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         user = self.request.user
         return Dispute.objects.filter(
             booking__guest=user
@@ -106,6 +109,8 @@ class StaffDisputeListView(generics.ListAPIView):
     filterset_fields = ["status", "category"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return Dispute.objects.select_related(
             "booking", "opened_by"
         ).order_by("-created_at")

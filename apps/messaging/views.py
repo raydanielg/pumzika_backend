@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.schema import schema_empty_queryset
 from . import services
 from .models import Conversation
 from .serializers import (
@@ -21,6 +22,8 @@ class ConversationListView(generics.ListAPIView):
     serializer_class = ConversationSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return (
             Conversation.objects.filter(participants__user=self.request.user)
             .select_related("property", "booking")
@@ -63,6 +66,8 @@ class MessageListView(generics.ListAPIView):
     serializer_class = MessageSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         conversation = services.get_conversation_for_user(
             self.request.user, self.kwargs["pk"]
         )

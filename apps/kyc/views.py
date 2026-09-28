@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.schema import schema_empty_queryset
 from apps.accounts.constants import KYC_REVIEW, KYC_SUBMIT, KYC_VIEW_ALL
 from apps.common.permissions import PermissionRequired
 from apps.admin_panel.services import audit
@@ -63,6 +64,8 @@ class MyKYCDocumentListView(generics.ListAPIView):
     serializer_class = KYCDocumentSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return services.get_or_create_profile(self.request.user).documents.all()
 
 
@@ -84,6 +87,8 @@ class MyKYCHistoryView(generics.ListAPIView):
     serializer_class = KYCStatusHistorySerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         profile = services.get_or_create_profile(self.request.user)
         return profile.status_history.all()
 
@@ -98,6 +103,8 @@ class StaffVerificationListView(generics.ListAPIView):
     filterset_fields = ["status"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return KYCVerification.objects.select_related("profile__user").order_by(
             "-submitted_at"
         )

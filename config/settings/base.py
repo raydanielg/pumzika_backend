@@ -320,11 +320,53 @@ if "test" in sys.argv:
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Pumzika Africa API",
-    "DESCRIPTION": "Short-stay accommodation marketplace API for Africa.",
+    "DESCRIPTION": (
+        "Short-stay accommodation marketplace API for Africa.\n\n"
+        "Responses use a standard envelope: `success`, `data`, `message`, "
+        "`request_id`. Errors carry `error.code` and `error.message`. "
+        "Authenticate with `Authorization: Bearer <access>` obtained from "
+        "POST /auth/login/; refresh via POST /auth/refresh/."
+    ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Trim /api/v1 so operation tags group by module (auth, bookings, ...).
+    "SCHEMA_PATH_PREFIX": "/api/v[0-9]",
+    "SCHEMA_PATH_PREFIX_TRIM": True,
+    "TAGS": [
+        {"name": "auth", "description": "Registration, login, tokens, verification, sessions."},
+        {"name": "users", "description": "Account profile, settings, host profile."},
+        {"name": "properties", "description": "Listings, images, rules, units, lifecycle."},
+        {"name": "availability", "description": "Calendars, blocks and date pricing."},
+        {"name": "search", "description": "Property search and filters."},
+        {"name": "bookings", "description": "Quotes, reservations and lifecycle."},
+        {"name": "payments", "description": "Payment providers, initiation, receipts, refunds."},
+        {"name": "payouts", "description": "Host wallet, methods and payout requests."},
+        {"name": "kyc", "description": "Identity and business verification."},
+        {"name": "reviews", "description": "Property, host and guest reviews."},
+        {"name": "messages", "description": "Guest-host conversations."},
+        {"name": "notifications", "description": "In-app, email, SMS and push notifications."},
+        {"name": "favorites", "description": "Guest wishlist."},
+        {"name": "locations", "description": "Countries, regions, cities, districts, areas."},
+        {"name": "promotions", "description": "Promo codes and discounts."},
+        {"name": "disputes", "description": "Booking disputes and evidence."},
+        {"name": "analytics", "description": "Event tracking."},
+        {"name": "admin", "description": "Staff and administrative operations."},
+        {"name": "health", "description": "Liveness and readiness probes."},
+    ],
     "COMPONENT_SPLIT_REQUEST": True,
     "SECURITY": [{"bearerAuth": []}],
+    "ENUM_NAME_OVERRIDES": {
+        "UserRoleEnum": "apps.accounts.models.User.Role",
+        "PropertyStatusEnum": "apps.properties.models.Property.Status",
+        "BookingStatusEnum": "apps.bookings.models.Booking.Status",
+        "PaymentStatusEnum": "apps.payments.models.Payment.Status",
+        "AvailabilityStatusEnum": "apps.availability.models.AvailabilityStatus",
+        "NotificationStatusEnum": "apps.notifications.models.Notification.Status",
+        "DisputeStatusEnum": "apps.disputes.models.Dispute.Status",
+        "RefundStatusEnum": "apps.payments.models.Refund.Status",
+        "PayoutStatusEnum": "apps.payouts.models.Payout.Status",
+        "SecurityIncidentStatusEnum": "apps.security.models.SecurityIncident.Status",
+    },
     "APPEND_COMPONENTS": {
         "securitySchemes": {
             "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}

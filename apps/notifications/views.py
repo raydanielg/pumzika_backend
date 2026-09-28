@@ -7,6 +7,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
 
+from apps.common.schema import schema_empty_queryset
+from drf_spectacular.utils import extend_schema
 from .models import (
     Notification,
     NotificationPreference,
@@ -27,6 +29,8 @@ class NotificationListView(generics.ListAPIView):
     serializer_class = NotificationSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return self.request.user.notifications.filter(channel="IN_APP")
 
 
@@ -36,6 +40,8 @@ class NotificationDetailView(generics.RetrieveAPIView):
     queryset = Notification.objects.all()
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return self.request.user.notifications.all()
 
 
@@ -43,6 +49,7 @@ class MarkReadView(APIView):
     permission_classes = [IsAuthenticated]
     serializer_class = NotificationSerializer
 
+    @extend_schema(tags=["Notifications"], operation_id="notifications_mark_read")
     def post(self, request, pk=None):
         qs = request.user.notifications.filter(read_at__isnull=True)
         if pk:
@@ -115,6 +122,8 @@ class DeviceListCreateView(generics.ListCreateAPIView):
                 else UserDeviceSerializer)
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return UserDevice.objects.filter(user=self.request.user, is_active=True)
 
     def perform_create(self, serializer):

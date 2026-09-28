@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.schema import schema_empty_queryset
 from apps.properties.models import Property
 
 from .models import Favorite
@@ -14,6 +15,8 @@ class FavoriteListView(generics.ListAPIView):
     serializer_class = FavoriteSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return (
             Favorite.objects.filter(user=self.request.user)
             .select_related("property__city", "property__country")

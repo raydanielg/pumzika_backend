@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import (
@@ -106,6 +107,7 @@ class BookingSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    @extend_schema_field(serializers.JSONField(allow_null=True))
     def get_property_location(self, obj):
         if obj.status not in (Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN,
                               Booking.Status.COMPLETED, Booking.Status.DISPUTED):
@@ -121,6 +123,7 @@ class BookingSerializer(serializers.ModelSerializer):
 class HostBookingSerializer(BookingSerializer):
     price = HostBookingPriceSerializer(read_only=True)
 
+    @extend_schema_field(serializers.JSONField(allow_null=True))
     def get_property_location(self, obj):
         prop = obj.property
         return {

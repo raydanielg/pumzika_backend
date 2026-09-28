@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import decorators, filters, generics, status, viewsets
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from apps.common.schema import schema_empty_queryset
 from apps.accounts.constants import PROPERTY_CREATE
 from apps.common.exceptions import NotFoundError
 from apps.common.permissions import PermissionRequired
@@ -53,9 +56,19 @@ class AmenityListView(generics.ListAPIView):
     pagination_class = None
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return Amenity.objects.filter(is_active=True).select_related("category")
 
 
+@extend_schema(
+    parameters=[
+        OpenApiParameter("image_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+        OpenApiParameter("rule_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+        OpenApiParameter("pricing_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+        OpenApiParameter("unit_id", OpenApiTypes.UUID, OpenApiParameter.PATH),
+    ]
+)
 class PropertyViewSet(viewsets.ModelViewSet):
     """Public list/detail shows only PUBLISHED properties.
 
@@ -70,6 +83,8 @@ class PropertyViewSet(viewsets.ModelViewSet):
     ordering_fields = ["created_at", "base_price", "rating"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         qs = (
             Property.objects.select_related(
                 "host", "host__host_profile", "property_type",
@@ -300,6 +315,8 @@ class PropertyDetailById(generics.RetrieveAPIView):
     serializer_class = PropertyPublicSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return (
             Property.objects.filter(status=Property.Status.PUBLISHED)
             .select_related("host__host_profile", "property_type", "country",

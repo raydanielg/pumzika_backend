@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from apps.common.schema import schema_empty_queryset
 from apps.common.exceptions import BusinessError
 from apps.common.throttles import AuthRateThrottle, StrictAuthRateThrottle
 from apps.admin_panel.services import audit
@@ -154,6 +155,8 @@ class SocialAccountsView(generics.ListAPIView):
     def get_queryset(self):
         from .models import SocialAccount
 
+        if getattr(self, "swagger_fake_view", False):
+            return SocialAccount.objects.none()
         return SocialAccount.objects.filter(user=self.request.user)
 
 
@@ -183,6 +186,8 @@ class PublicHostProfileView(generics.RetrieveAPIView):
     serializer_class = PublicHostProfileSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return HostProfile.objects.select_related("user").filter(
             hosting_status=HostProfile.HostingStatus.ACTIVE
         )

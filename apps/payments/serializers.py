@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Payment, PaymentProvider, PaymentTransaction, Refund
@@ -60,6 +61,7 @@ class PaymentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    @extend_schema_field(serializers.DecimalField(max_digits=12, decimal_places=2, allow_null=True))
     def get_refunded_amount(self, obj):
         refunded = sum(
             r.amount for r in obj.refunds.all()

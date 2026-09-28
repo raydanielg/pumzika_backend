@@ -12,6 +12,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.schema import schema_empty_queryset
 from apps.accounts.constants import PAYMENT_REFUND, PAYMENT_VIEW_ALL
 from apps.common.permissions import PermissionRequired
 from apps.common.throttles import PaymentRateThrottle, WebhookRateThrottle
@@ -35,6 +36,8 @@ class ProviderListView(generics.ListAPIView):
     pagination_class = None
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return services.active_providers()
 
 
@@ -70,6 +73,8 @@ class MyPaymentsView(generics.ListAPIView):
     filterset_fields = ["status", "currency"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return Payment.objects.filter(
             booking__guest=self.request.user
         ).select_related("provider", "booking").order_by("-created_at")
@@ -80,6 +85,8 @@ class PaymentDetailView(generics.RetrieveAPIView):
     serializer_class = PaymentDetailSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         user = self.request.user
         qs = Payment.objects.select_related(
             "provider", "booking__property"
@@ -195,6 +202,8 @@ class AdminRefundListView(generics.ListAPIView):
     serializer_class = RefundSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return Refund.objects.select_related("payment", "booking").order_by("-created_at")
 
 
@@ -205,6 +214,8 @@ class MyRefundsView(generics.ListAPIView):
     serializer_class = RefundSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return Refund.objects.filter(
             payment__booking__guest=self.request.user
         ).select_related("payment", "booking").order_by("-created_at")
@@ -220,6 +231,8 @@ class AdminPaymentListView(generics.ListAPIView):
     filterset_fields = ["status", "currency", "provider__code"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         qs = Payment.objects.select_related(
             "provider", "booking", "booking__guest", "user"
         ).prefetch_related("refunds").order_by("-created_at")

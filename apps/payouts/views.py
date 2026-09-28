@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.schema import schema_empty_queryset
 from apps.accounts.constants import PAYOUT_APPROVE, PAYOUT_REQUEST, PAYOUT_VIEW_ALL
 from apps.common.permissions import PermissionRequired
 from apps.admin_panel.services import audit
@@ -36,6 +37,8 @@ class MyWalletTransactionsView(generics.ListAPIView):
     serializer_class = WalletTransactionSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         wallet = services.get_wallet(self.request.user)
         return WalletTransaction.objects.filter(wallet=wallet)
 
@@ -45,6 +48,8 @@ class PayoutMethodViewSet(generics.ListCreateAPIView):
     serializer_class = PayoutMethodSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return PayoutMethod.objects.filter(user=self.request.user, is_active=True)
 
     def perform_create(self, serializer):
@@ -56,6 +61,8 @@ class PayoutMethodDetailView(generics.RetrieveDestroyAPIView):
     serializer_class = PayoutMethodSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return PayoutMethod.objects.filter(user=self.request.user)
 
     def perform_destroy(self, instance):
@@ -68,6 +75,8 @@ class MyPayoutsView(generics.ListAPIView):
     serializer_class = PayoutSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return Payout.objects.filter(user=self.request.user).select_related("method")
 
 
@@ -99,6 +108,8 @@ class AdminPayoutListView(generics.ListAPIView):
     filterset_fields = ["status", "currency"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         return Payout.objects.select_related("user", "method").order_by("-requested_at")
 
 

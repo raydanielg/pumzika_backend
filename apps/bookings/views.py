@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.schema import schema_empty_queryset
 from apps.common.exceptions import PermissionDeniedError
 from apps.admin_panel.services import audit
 from apps.properties.models import Property
@@ -44,6 +45,8 @@ class BookingViewSet(viewsets.GenericViewSet,
     filterset_fields = ["status", "property"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return schema_empty_queryset(self)
         qs = Booking.objects.select_related(
             "property", "property__city", "property__host", "guest", "price"
         ).prefetch_related("guests", "status_history")

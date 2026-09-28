@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import (
@@ -140,6 +141,7 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    @extend_schema_field(PropertyUnitSerializer(many=True))
     def get_units(self, obj):
         return PropertyUnitSerializer(obj.units.filter(is_active=True), many=True).data
 
@@ -147,6 +149,7 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
         profile = getattr(obj.host, "host_profile", None)
         return bool(profile and profile.verification_status == "VERIFIED")
 
+    @extend_schema_field(PropertyImageSerializer(allow_null=True))
     def get_cover_image(self, obj):
         for img in obj.images.all():
             if img.is_cover:
@@ -159,18 +162,26 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
         # ~1.1 km rounding — enough for discovery, not enough to find the door.
         return str(value.quantize(Decimal("0.01"))) if value is not None else None
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_approximate_latitude(self, obj):
         return self._approx(obj.latitude)
 
+    @extend_schema_field(serializers.CharField(allow_null=True))
     def get_approximate_longitude(self, obj):
         return self._approx(obj.longitude)
 
+    @extend_schema_field(serializers.BooleanField())
     def get_exact_location_available(self, obj) -> bool:
         return False
 
 
 class PropertyHostSerializer(PropertyPublicSerializer):
     """Host's own view — includes workflow fields and the real address."""
+
+    @extend_schema_field(PropertyUnitSerializer(many=True))
+    def get_units(self, obj):
+        # Hosts see all units, including inactive ones.
+        return PropertyUnitSerializer(obj.units.all(), many=True).data
 
     policy = PropertyPolicySerializer(read_only=True)
     rules = PropertyRuleSerializer(many=True, read_only=True)
@@ -185,9 +196,11 @@ class PropertyHostSerializer(PropertyPublicSerializer):
             "readiness_errors", "updated_at",
         ]
 
+    @extend_schema_field(serializers.BooleanField())
     def get_exact_location_available(self, obj) -> bool:
         return True
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_readiness_errors(self, obj):
         from .services import publish_readiness_errors
 
