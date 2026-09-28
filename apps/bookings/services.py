@@ -24,10 +24,34 @@ from .cancellation import compute_cancellation, policy_snapshot
 from .models import (
     Booking,
     BookingCancellation,
+    BookingEvent,
     BookingPrice,
     BookingStatusHistory,
 )
 from .pricing import compute_quote
+
+
+def _event(booking: Booking, event_type: str, actor=None, note: str = "",
+           data: dict | None = None, request=None) -> None:
+    """Append a business event to the booking's audit trail."""
+    BookingEvent.objects.create(
+        booking=booking,
+        event_type=event_type,
+        actor=actor,
+        note=note,
+        data=data or {},
+        request_id=getattr(request, "request_id", "") if request else "",
+    )
+
+
+def assert_guest_can_book(guest) -> None:
+    """Eligibility gate — suspended/unverified accounts cannot book."""
+    if not guest.is_active or guest.deleted_at:
+        raise BusinessError("Your account is not able to make bookings.",
+                            code="ACCOUNT_INACTIVE")
+    if not guest.is_email_verified:
+        raise BusinessError("Please verify your email before booking.",
+                            code="EMAIL_NOT_VERIFIED")
 
 
 def get_booking(booking_id) -> Booking:
@@ -89,11 +113,14 @@ def quote_for_property(prop: Property, check_in: date, check_out: date,
 def create_booking(guest, *, property_id, check_in: date, check_out: date,
                    guests_count: int, promo_code: str = "",
                    special_requests: str = "", guest_details: list | None = None,
+                   adults: int | None = None, children: int = 0,
+                   infants: int = 0,
                    idempotency_key: str | None = None, request=None) -> Booking:
     """Create a PENDING booking and lock the dates atomically.
 
     Idempotent: a repeated Idempotency-Key returns the original booking
-    instead of creating a duplicate.
+    instead of creating a duplicate. Infants do not count toward the
+    property's max occupancy.
     """
     if idempotency_key:
         existing = Booking.objects.filter(
@@ -101,9 +128,10 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
         ).first()
         if existing is not None:
             return existing
+    assert_guest_can_book(guest)
     prop = (
         Property.objects.select_for_update()
-        .select_related("host__host_profile", "country", "property_type")
+        .select_related("host__host_profile", "country", "property_type", "city")
         .filter(pk=property_id)
         .first()
     )
@@ -113,6 +141,13 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
         raise BusinessError("You cannot book your own property.", code="SELF_BOOKING")
 
     availability.assert_property_bookable(prop)
+    # Guest-count authority is always the backend; infants are exempt.
+    if adults is not None:
+        guests_count = adults + children
+    if adults is not None and adults < 1:
+        raise BusinessError("At least one adult is required.", code="NO_ADULTS")
+    if guests_count < 1:
+        raise BusinessError("At least one guest is required.", code="NO_GUESTS")
     if guests_count > prop.max_guests:
         raise BusinessError(
             f"This property allows at most {prop.max_guests} guests.",
@@ -141,14 +176,25 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
                             code="ABOVE_MAX_BOOKING_AMOUNT")
 
     booking = Booking.objects.create(
-        reference=generate_reference("BKG"),
+        reference=generate_reference("PZA"),
         guest=guest,
         property=prop,
         check_in=check_in,
         check_out=check_out,
         guests_count=guests_count,
+        adults=adults if adults is not None else guests_count,
+        children=children,
+        infants=infants,
         currency=prop.currency,
+        # Historical snapshot — immune to later property/host edits.
+        host=prop.host,
+        property_title=prop.title,
+        property_address=prop.address,
+        property_city_name=prop.city.name if prop.city else "",
         cancellation_policy=prop.cancellation_policy,
+        cancellation_policy_name=(
+            prop.cancellation_policy.name if prop.cancellation_policy else ""
+        ),
         cancellation_policy_snapshot=policy_snapshot(prop.cancellation_policy),
         expires_at=booking_payment_deadline(),
         promo_code=promo.code if promo else "",
@@ -183,6 +229,9 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
         promo_service.record_usage(promo, guest, booking)
 
     _record(booking, Booking.Status.PENDING, changed_by=guest)
+    _event(booking, "BOOKING_CREATED", actor=guest, request=request,
+           data={"check_in": str(check_in), "check_out": str(check_out),
+                 "guests": guests_count, "total": str(breakdown.total)})
     audit(actor=guest, action="booking.created", target=booking, request=request)
 
     from apps.notifications.tasks import notify_booking_created
@@ -243,15 +292,28 @@ def models_f(field: str):
 
 @transaction.atomic
 def cancel_booking(booking: Booking, cancelled_by, reason: str = "") -> Booking:
-    """Guest/host/admin cancellation — refund computed by the engine."""
+    """Guest/host/admin cancellation — refund computed by the engine.
+
+    Hosts and staff must give a reason; host-initiated cancels always
+    fully refund the guest (policy in compute_cancellation).
+    """
     booking = Booking.objects.select_for_update().get(pk=booking.pk)
-    result = compute_cancellation(booking)
+    is_guest = cancelled_by.id == booking.guest_id
+    if not is_guest and not reason.strip():
+        raise BusinessError("A cancellation reason is required.",
+                            code="REASON_REQUIRED")
+    result = compute_cancellation(booking, cancelled_by)
     if not result.allowed:
         raise BusinessError(result.reason, code="CANCELLATION_NOT_ALLOWED")
 
     _transition(booking, Booking.Status.CANCELLED, cancelled_by, reason)
     booking.cancelled_at = timezone.now()
     booking.save(update_fields=["status", "cancelled_at", "updated_at"])
+    _event(booking, "BOOKING_CANCELLED", actor=cancelled_by, note=reason,
+           data={"refund": str(result.refund_amount),
+                 "cancelled_by_role": (
+                     "GUEST" if is_guest
+                     else "STAFF" if cancelled_by.is_staff_role else "HOST")})
 
     BookingCancellation.objects.create(
         booking=booking,

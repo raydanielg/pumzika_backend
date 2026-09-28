@@ -36,17 +36,38 @@ def _matching_rule(policy: CancellationPolicy, hours_before: float):
     return rules[-1] if rules else None  # least refund tier
 
 
-def compute_cancellation(booking: Booking) -> CancellationResult:
-    """What would happen if the booking were cancelled right now."""
+def compute_cancellation(booking: Booking, cancelled_by=None) -> CancellationResult:
+    """What would happen if the booking were cancelled right now.
+
+    Host/staff cancellations bypass the guest policy — the guest is always
+    fully refunded when the host cancels (configurable via
+    HOST_CANCEL_REFUND_PERCENT).
+    """
     if booking.status in (Booking.Status.CANCELLED, Booking.Status.REFUNDED,
                           Booking.Status.EXPIRED):
         return CancellationResult(False, "Booking already ended.",
                                   Decimal("0"), Decimal("0"), False)
+    price = booking.price
     if booking.status in (Booking.Status.PENDING, Booking.Status.AWAITING_PAYMENT):
         # No money taken yet — full release.
-        total = booking.price.total if hasattr(booking, "price") else Decimal("0")
+        total = price.total if hasattr(booking, "price") else Decimal("0")
         return CancellationResult(True, "Unpaid booking released.", money(total),
                                   Decimal("0"), True)
+
+    host_cancelled = cancelled_by is not None and (
+        cancelled_by.id == booking.property.host_id
+        or getattr(cancelled_by, "is_staff_role", False)
+    )
+    if host_cancelled:
+        from apps.admin_panel.models import PlatformSetting
+
+        percent = Decimal(str(
+            PlatformSetting.get("HOST_CANCEL_REFUND_PERCENT", 100)
+        ))
+        return CancellationResult(
+            True, f"Host/admin cancellation — {percent}% refund.",
+            money(percent_of(price.total, percent)), Decimal("0"), True,
+        )
 
     policy = booking.cancellation_policy
     price = booking.price

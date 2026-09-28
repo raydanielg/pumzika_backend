@@ -60,6 +60,7 @@ class CancellationRule(TimeStampedModel):
 
 class Booking(UUIDModel):
     class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
         PENDING = "PENDING", "Pending"
         AWAITING_PAYMENT = "AWAITING_PAYMENT", "Awaiting Payment"
         CONFIRMED = "CONFIRMED", "Confirmed"
@@ -72,6 +73,7 @@ class Booking(UUIDModel):
 
     #: allowed transitions: {from: {to, ...}}
     TRANSITIONS = {
+        Status.DRAFT: {Status.PENDING, Status.CANCELLED},
         Status.PENDING: {Status.AWAITING_PAYMENT, Status.CONFIRMED,
                          Status.CANCELLED, Status.EXPIRED},
         Status.AWAITING_PAYMENT: {Status.CONFIRMED, Status.CANCELLED,
@@ -98,6 +100,20 @@ class Booking(UUIDModel):
     check_in = models.DateField(db_index=True)
     check_out = models.DateField(db_index=True)
     guests_count = models.PositiveIntegerField(default=1)
+    adults = models.PositiveIntegerField(default=1)
+    children = models.PositiveIntegerField(default=0)
+    infants = models.PositiveIntegerField(
+        default=0, help_text="Infants do not count toward max occupancy"
+    )
+    # Ownership snapshot — survives later property/host changes.
+    host = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name="hosted_bookings", null=True, blank=True,
+    )
+    property_title = models.CharField(max_length=200, blank=True)
+    property_address = models.CharField(max_length=255, blank=True)
+    property_city_name = models.CharField(max_length=100, blank=True)
+    cancellation_policy_name = models.CharField(max_length=100, blank=True)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
     )
@@ -177,6 +193,52 @@ class BookingPrice(TimeStampedModel):
     nightly_detail = models.JSONField(
         default=list, help_text="[{date, price}] breakdown per night"
     )
+
+
+class BookingEvent(TimeStampedModel):
+    """Non-status business events — payment steps, modifications, refunds.
+
+    Complements BookingStatusHistory (status transitions) with an ordered
+    audit trail that includes the request_id for debugging.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.ForeignKey(
+        Booking, on_delete=models.CASCADE, related_name="events"
+    )
+    event_type = models.CharField(max_length=50, db_index=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="booking_events",
+    )
+    note = models.TextField(blank=True)
+    data = models.JSONField(default=dict, blank=True)
+    request_id = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [models.Index(fields=["booking", "event_type"])]
+
+
+class BookingNote(TimeStampedModel):
+    """Notes on a booking. Internal notes are never exposed to guests."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    booking = models.ForeignKey(
+        Booking, on_delete=models.CASCADE, related_name="notes"
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, related_name="booking_notes",
+    )
+    body = models.TextField()
+    is_internal = models.BooleanField(
+        default=False,
+        help_text="Internal notes are staff/host only",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class BookingStatusHistory(TimeStampedModel):

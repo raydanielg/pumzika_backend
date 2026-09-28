@@ -132,6 +132,9 @@ def initiate_payment(user, *, booking_id, provider_code: str,
     payment.save(update_fields=["external_reference", "metadata", "updated_at"])
 
     booking_services.mark_awaiting_payment(booking)
+    booking_services._event(payment.booking, "PAYMENT_STARTED",
+                            actor=guest, data={"reference": payment.reference,
+                                               "amount": str(payment.amount)})
     transaction.on_commit(
         lambda: notify_payment_pending.delay(str(payment.id))
     )
@@ -209,6 +212,19 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
     payment = Payment.objects.select_for_update().get(pk=payment.pk)
 
     if data.event_type == "payment.success":
+        # Verify the provider-confirmed amount/currency against our record —
+        # a mismatched webhook is a reconciliation incident, not a confirm.
+        payload_amount = (data.payload.get("data") or {}).get("amount")
+        payload_currency = (data.payload.get("data") or {}).get("currency")
+        if payload_amount is not None and (
+            Decimal(str(payload_amount)) != payment.amount
+        ):
+            raise BusinessError("Webhook amount mismatch.",
+                                code="PAYMENT_AMOUNT_MISMATCH")
+        if payload_currency and payload_currency.upper() != payment.currency:
+            raise BusinessError("Webhook currency mismatch.",
+                                code="PAYMENT_CURRENCY_MISMATCH")
+
         _record_transaction(payment, "WEBHOOK_SUCCESS", Payment.Status.SUCCESS,
                             data.external_reference, data.payload)
         payment.status = Payment.Status.SUCCESS
@@ -219,6 +235,11 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
                                     "updated_at"])
         booking_services.confirm_booking(payment.booking,
                                          note="Payment confirmed via webhook")
+        booking_services._event(
+            payment.booking, "PAYMENT_SUCCESS",
+            data={"reference": payment.reference,
+                  "external": payment.external_reference},
+        )
         transaction.on_commit(
             lambda: _notify_payment_success(payment.id)
         )
@@ -237,6 +258,10 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
         # The booking stays payable — a failed payment does NOT kill it.
         # The booking's own expiry window (expire_unpaid_bookings) is the
         # single authority on when held dates are released.
+        booking_services._event(
+            payment.booking, "PAYMENT_FAILED",
+            data={"reference": payment.reference, "provider_status": new_status},
+        )
         transaction.on_commit(
             lambda: _notify_payment_failed(payment.id)
         )
