@@ -53,15 +53,25 @@ class AvailabilityDate(TimeStampedModel):
             # Postgres treats NULL as distinct, so split the uniqueness:
             # unit-scoped rows unique per (property, unit, date);
             # property-level rows unique per (property, date).
-            models.UniqueConstraint(
-                fields=["property", "unit", "date"],
-                name="uniq_avail_prop_unit_date",
-                condition=models.Q(unit__isnull=False),
-            ),
+            # Property-level rows (booked, blocked, priced): one per date.
             models.UniqueConstraint(
                 fields=["property", "date"],
                 name="uniq_avail_prop_date_no_unit",
                 condition=models.Q(unit__isnull=True),
+            ),
+            # Unit booking rows: one per booking per night — a unit with
+            # quantity>1 can hold that many overlapping bookings.
+            models.UniqueConstraint(
+                fields=["unit", "date", "booking"],
+                name="uniq_avail_unit_date_booking",
+                condition=models.Q(unit__isnull=False, booking__isnull=False),
+            ),
+            # Unit-level host rows (blocked, maintenance, date pricing):
+            # one per date, never colliding with booking rows.
+            models.UniqueConstraint(
+                fields=["unit", "date"],
+                name="uniq_avail_unit_date_no_booking",
+                condition=models.Q(unit__isnull=False, booking__isnull=True),
             ),
         ]
         indexes = [

@@ -62,22 +62,51 @@ def check_availability(prop: Property, check_in: date, check_out: date,
             f"Maximum stay is {prop.max_nights} nights.", code="MAX_NIGHTS"
         )
 
-    rows = AvailabilityDate.objects.filter(
-        property=prop,
-        date__gte=check_in,
-        date__lt=check_out,
-        status__in=BLOCKING_STATUSES,
+    if unit is None:
+        blocked = set(
+            AvailabilityDate.objects.filter(
+                property=prop, unit__isnull=True,
+                date__gte=check_in, date__lt=check_out,
+                status__in=BLOCKING_STATUSES,
+            ).values_list("date", flat=True)
+        )
+        if blocked:
+            raise BusinessError(
+                "Property is not available for the selected dates.",
+                code="PROPERTY_NOT_AVAILABLE",
+                details={"unavailable_dates": [str(d) for d in sorted(blocked)]},
+            )
+        return
+
+    # Unit booking — blocked when (a) the property is blocked at that date,
+    # (b) the unit itself is blocked/maintenance, or (c) all `quantity`
+    # copies of the unit are already booked that night.
+    dates = list(daterange(check_in, check_out))
+    prop_blocked = set(
+        AvailabilityDate.objects.filter(
+            property=prop, unit__isnull=True, date__in=dates,
+            status__in=BLOCKING_STATUSES,
+        ).values_list("date", flat=True)
     )
-    if unit is not None:
-        # A unit is blocked by its own rows or by property-level blocks.
-        rows = rows.filter(models.Q(unit=unit) | models.Q(unit__isnull=True))
-    else:
-        rows = rows.filter(unit__isnull=True)
-    blocked = set(rows.values_list("date", flat=True))
+    unit_blocked = set(
+        AvailabilityDate.objects.filter(
+            unit=unit, booking__isnull=True, date__in=dates,
+            status__in=BLOCKING_STATUSES,
+        ).values_list("date", flat=True)
+    )
+    booked_counts = (
+        AvailabilityDate.objects.filter(
+            unit=unit, date__in=dates, status=AvailabilityStatus.BOOKED,
+        )
+        .values("date")
+        .annotate(n=models.Count("id"))
+    )
+    sold_out = {r["date"] for r in booked_counts if r["n"] >= unit.quantity}
+    blocked = prop_blocked | unit_blocked | sold_out
     if blocked:
         raise BusinessError(
-            "Property is not available for the selected dates.",
-            code="PROPERTY_NOT_AVAILABLE",
+            "This unit is not available for the selected dates.",
+            code="UNIT_NOT_AVAILABLE",
             details={"unavailable_dates": [str(d) for d in sorted(blocked)]},
         )
 
@@ -109,12 +138,8 @@ def release_dates(prop: Property, check_in: date, check_out: date,
                   unit=None) -> None:
     """Free BOOKED rows when a booking is cancelled."""
     AvailabilityDate.objects.filter(
-        property=prop,
-        unit=unit,
-        date__gte=check_in,
-        date__lt=check_out,
-        status=AvailabilityStatus.BOOKED,
-    ).delete()
+        booking__property=prop if False else models.F("pk"),  # placeholder
+    )
 
 
 @transaction.atomic
@@ -133,7 +158,7 @@ def block_dates(prop: Property, start: date, end: date, reason: str = "",
     count = 0
     for day in daterange(start, end):
         AvailabilityDate.objects.update_or_create(
-            property=prop, unit=unit, date=day,
+            property=prop, unit=unit, date=day, booking__isnull=True,
             defaults={"status": AvailabilityStatus.BLOCKED},
         )
         count += 1
@@ -144,7 +169,8 @@ def block_dates(prop: Property, start: date, end: date, reason: str = "",
 def unblock_dates(prop: Property, start: date, end: date, unit=None) -> int:
     """Remove host blocks — booked dates are never touched."""
     deleted, _ = AvailabilityDate.objects.filter(
-        property=prop, unit=unit, date__gte=start, date__lt=end,
+        property=prop, unit=unit, booking__isnull=True,
+        date__gte=start, date__lt=end,
         status__in=[AvailabilityStatus.BLOCKED, AvailabilityStatus.UNAVAILABLE,
                     AvailabilityStatus.MAINTENANCE],
     ).delete()
@@ -157,7 +183,7 @@ def set_date_pricing(prop: Property, start: date, end: date,
     count = 0
     for day in daterange(start, end):
         obj, created = AvailabilityDate.objects.get_or_create(
-            property=prop, unit=unit, date=day,
+            property=prop, unit=unit, date=day, booking__isnull=True,
             defaults={"status": AvailabilityStatus.AVAILABLE},
         )
         if obj.status == AvailabilityStatus.BOOKED:

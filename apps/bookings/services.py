@@ -170,7 +170,7 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
                 code="TOO_MANY_GUESTS",
             )
 
-    availability.check_availability(prop, check_in, check_out)
+    availability.check_availability(prop, check_in, check_out, unit=unit)
 
     promo = None
     discount = Decimal("0")
