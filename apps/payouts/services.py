@@ -133,6 +133,9 @@ def process_payout(admin_user, payout_id, approve: bool, reason: str = "") -> Pa
         raise NotFoundError("Payout not found.", code="PAYOUT_NOT_FOUND")
     if payout.status != Payout.Status.PENDING:
         raise BusinessError("Payout already processed.", code="PAYOUT_ALREADY_PROCESSED")
+    if not approve and not (reason or "").strip():
+        raise BusinessError("A rejection reason is required.",
+                            code="REASON_REQUIRED")
 
     payout.processed_by = admin_user
     payout.processed_at = timezone.now()
