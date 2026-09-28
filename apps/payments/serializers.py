@@ -68,6 +68,21 @@ class PaymentSerializer(serializers.ModelSerializer):
         return str(refunded)
 
 
+class PaymentDetailSerializer(PaymentSerializer):
+    """Detail view — includes the immutable event timeline for support."""
+
+    transactions = PaymentTransactionSerializer(many=True, read_only=True)
+    booking_reference = serializers.CharField(
+        source="booking.reference", read_only=True
+    )
+
+    class Meta(PaymentSerializer.Meta):
+        fields = PaymentSerializer.Meta.fields + [
+            "transactions", "booking_reference", "external_reference",
+            "payment_method", "provider_status", "failed_at", "expired_at",
+        ]
+
+
 class RefundCreateSerializer(serializers.Serializer):
     payment_id = serializers.UUIDField()
     amount = serializers.DecimalField(max_digits=14, decimal_places=2,

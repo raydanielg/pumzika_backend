@@ -90,12 +90,13 @@ def initiate_payment(user, *, booking_id, provider_code: str,
 
         idempotency_key = f"auto-{uuid.uuid4().hex[:24]}"
 
-    booking = (
-        Booking.objects.select_for_update()
-        .select_related("price", "property")
-        .filter(pk=booking_id)
-        .first()
+    # booking_id accepts either the UUID pk or the public PZA- reference.
+    booking_qs = Booking.objects.select_for_update().select_related(
+        "price", "property", "guest"
     )
+    booking = booking_qs.filter(pk=booking_id).first()
+    if booking is None:
+        booking = booking_qs.filter(reference=str(booking_id)).first()
     if booking is None:
         raise NotFoundError("Booking not found.", code="BOOKING_NOT_FOUND")
     if booking.guest_id != user.id:
@@ -118,11 +119,16 @@ def initiate_payment(user, *, booking_id, provider_code: str,
         raise BusinessError("Provider does not support this currency.",
                             code="CURRENCY_NOT_SUPPORTED")
 
-    # Idempotent replay — return the existing payment untouched.
+    # Idempotent replay — the same key may only ever name the same request.
     existing = Payment.objects.filter(
         idempotency_key=idempotency_key, booking__guest=user
     ).first()
     if existing is not None:
+        if existing.booking_id != booking.id:
+            raise BusinessError(
+                "Idempotency key was used for a different payment.",
+                code="IDEMPOTENCY_CONFLICT",
+            )
         return existing
 
     from apps.notifications.tasks import notify_payment_pending
@@ -263,9 +269,19 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
 
         _transition_payment(payment, Payment.Status.SUCCESS, "WEBHOOK_SUCCESS",
                             data.external_reference, data.payload)
+        update = []
         if data.external_reference:
             payment.external_reference = data.external_reference
-            payment.save(update_fields=["external_reference", "updated_at"])
+            update.append("external_reference")
+        remote_status = (data.payload.get("data") or [{}])[0].get(
+            "payment_status"
+        ) or (data.payload.get("data") or {}).get("payment_status")
+        if remote_status:
+            payment.provider_status = str(remote_status).upper()
+            update.append("provider_status")
+        if update:
+            update.append("updated_at")
+            payment.save(update_fields=update)
         booking_services.confirm_booking(payment.booking,
                                          note="Payment confirmed via webhook")
         booking_services._event(
@@ -276,6 +292,13 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
         transaction.on_commit(
             lambda: _notify_payment_success(payment.id)
         )
+
+    elif data.event_type == "payment.pending":
+        _transition_payment(payment, Payment.Status.PROCESSING,
+                            "WEBHOOK_PENDING", data.external_reference,
+                            data.payload)
+        payment.provider_status = "PENDING"
+        payment.save(update_fields=["provider_status", "updated_at"])
 
     elif data.event_type in ("payment.failed", "payment.cancelled", "payment.expired"):
         status_map = {

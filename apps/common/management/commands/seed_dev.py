@@ -168,6 +168,19 @@ class Command(BaseCommand):
                 "supported_currencies": ["TZS", "KES", "USD"],
             },
         )
+        # Selcom is registered but only active when credentials are present.
+        PaymentProvider.objects.update_or_create(
+            code="SELCOM",
+            defaults={
+                "name": "Selcom",
+                "is_active": bool(
+                    settings.SELCOM_API_KEY and settings.SELCOM_VENDOR_ID
+                ),
+                "is_default": bool(settings.SELCOM_API_KEY),
+                "supported_currencies": ["TZS"],
+                "countries": ["TZ"],
+            },
+        )
 
         defaults = {
             "SERVICE_FEE_PERCENT": "12",

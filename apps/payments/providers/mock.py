@@ -1,9 +1,7 @@
-"""Payment provider abstraction — providers are replaceable.
+"""Sandbox provider for development/tests — no real money moves.
 
-Each provider implements PaymentProviderInterface. The MOCK provider is a
-clearly-labelled sandbox implementation for development/testing — it never
-pretends to be a real integration. Real providers (Selcom, AzamPay, Stripe)
-slot in by implementing the same interface and registering below.
+Webhooks are HMAC-signed exactly like real providers so the webhook pipeline
+is exercised end-to-end.
 """
 from __future__ import annotations
 
@@ -11,42 +9,14 @@ import hashlib
 import hmac
 import json
 import uuid
-from dataclasses import dataclass
-from typing import Protocol
 
 from django.conf import settings
 
-
-class ProviderError(Exception):
-    pass
-
-
-@dataclass
-class InitiationResult:
-    provider_reference: str
-    status: str  # "PENDING" | "SUCCESS" | "FAILED"
-    checkout_url: str | None = None
-    raw: dict | None = None
-
-
-@dataclass
-class WebhookData:
-    external_event_id: str
-    event_type: str  # "payment.success" | "payment.failed" | "refund.success" ...
-    reference: str | None = None
-    external_reference: str | None = None
-    payload: dict | None = None
-
-
-class PaymentProviderInterface(Protocol):
-    code: str
-
-    def initiate(self, payment, method_details: dict) -> InitiationResult: ...
-    def verify_webhook(self, body: bytes, headers: dict) -> WebhookData: ...
-    def refund(self, refund) -> InitiationResult: ...
-    def check_status(self, payment) -> str | None:
-        """Provider-side status for reconciliation — None if unsupported."""
-        return None
+from .base import (
+    InitiationResult,
+    ProviderError,
+    WebhookData,
+)
 
 
 def _mock_secret() -> str:
@@ -54,12 +24,6 @@ def _mock_secret() -> str:
 
 
 class MockProvider:
-    """Sandbox provider for development. No real money moves.
-
-    Webhooks are HMAC-signed exactly like real providers so the webhook
-    pipeline is exercised end-to-end.
-    """
-
     code = "MOCK"
 
     def initiate(self, payment, method_details: dict) -> InitiationResult:
@@ -105,19 +69,3 @@ class MockProvider:
 def mock_webhook_signature(body: bytes) -> str:
     """Test/dev helper to sign mock webhook payloads."""
     return hmac.new(_mock_secret().encode(), body, hashlib.sha256).hexdigest()
-
-
-_PROVIDER_REGISTRY: dict[str, type] = {
-    MockProvider.code: MockProvider,
-}
-
-
-def register_provider(cls: type) -> None:
-    _PROVIDER_REGISTRY[cls.code] = cls
-
-
-def get_provider(code: str) -> PaymentProviderInterface:
-    try:
-        return _PROVIDER_REGISTRY[code]()
-    except KeyError as exc:
-        raise ProviderError(f"Provider '{code}' is not implemented.") from exc

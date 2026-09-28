@@ -20,6 +20,7 @@ from apps.admin_panel.services import audit
 from . import services
 from .models import Payment, PaymentProvider, Refund
 from .serializers import (
+    PaymentDetailSerializer,
     PaymentInitiateSerializer,
     PaymentProviderSerializer,
     PaymentSerializer,
@@ -76,11 +77,13 @@ class MyPaymentsView(generics.ListAPIView):
 
 class PaymentDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = PaymentSerializer
+    serializer_class = PaymentDetailSerializer
 
     def get_queryset(self):
         user = self.request.user
-        qs = Payment.objects.select_related("provider", "booking__property")
+        qs = Payment.objects.select_related(
+            "provider", "booking__property"
+        ).prefetch_related("transactions", "refunds")
         if user.is_staff_role:
             return qs
         return qs.filter(booking__guest=user)

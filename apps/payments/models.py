@@ -48,6 +48,7 @@ class Payment(UUIDModel):
         FAILED = "FAILED", "Failed"
         CANCELLED = "CANCELLED", "Cancelled"
         EXPIRED = "EXPIRED", "Expired"
+        REFUND_PENDING = "REFUND_PENDING", "Refund Pending"
         REFUNDED = "REFUNDED", "Refunded"
         PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED", "Partially Refunded"
 
@@ -58,8 +59,11 @@ class Payment(UUIDModel):
         Status.PENDING: {Status.PROCESSING, Status.SUCCESS, Status.FAILED,
                          Status.CANCELLED, Status.EXPIRED},
         Status.PROCESSING: {Status.SUCCESS, Status.FAILED, Status.EXPIRED},
-        Status.SUCCESS: {Status.REFUNDED, Status.PARTIALLY_REFUNDED},
-        Status.PARTIALLY_REFUNDED: {Status.REFUNDED},
+        Status.SUCCESS: {Status.REFUND_PENDING, Status.REFUNDED,
+                         Status.PARTIALLY_REFUNDED},
+        Status.REFUND_PENDING: {Status.REFUNDED, Status.PARTIALLY_REFUNDED,
+                                Status.SUCCESS},  # refund rejected -> back
+        Status.PARTIALLY_REFUNDED: {Status.REFUND_PENDING, Status.REFUNDED},
         Status.FAILED: set(),
         Status.CANCELLED: set(),
         Status.EXPIRED: set(),
@@ -95,6 +99,11 @@ class Payment(UUIDModel):
     expired_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     failure_reason = models.TextField(blank=True)
+    failure_code = models.CharField(max_length=50, blank=True)
+    provider_status = models.CharField(
+        max_length=50, blank=True,
+        help_text="Raw provider-side status (e.g. COMPLETED) for audit",
+    )
     metadata = models.JSONField(default=dict, blank=True)
 
     def can_transition_to(self, to_status: str) -> bool:
