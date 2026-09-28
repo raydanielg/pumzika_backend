@@ -76,12 +76,14 @@ class BookingSerializer(serializers.ModelSerializer):
     property_city = serializers.CharField(source="property.city.name", read_only=True)
     guest_email = serializers.EmailField(source="guest.email", read_only=True)
     status_history = BookingStatusHistorySerializer(many=True, read_only=True)
+    # Exact location is revealed only once the stay is confirmed.
+    property_location = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             "id", "reference", "guest", "guest_email", "property",
-            "property_title", "property_city",
+            "property_title", "property_city", "property_location",
             "check_in", "check_out", "guests_count", "status", "currency",
             "promo_code", "special_requests",
             "expires_at", "confirmed_at", "cancelled_at",
@@ -90,9 +92,28 @@ class BookingSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    def get_property_location(self, obj):
+        if obj.status not in (Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN,
+                              Booking.Status.COMPLETED, Booking.Status.DISPUTED):
+            return None
+        prop = obj.property
+        return {
+            "address": prop.address,
+            "latitude": str(prop.latitude) if prop.latitude is not None else None,
+            "longitude": str(prop.longitude) if prop.longitude is not None else None,
+        }
+
 
 class HostBookingSerializer(BookingSerializer):
     price = HostBookingPriceSerializer(read_only=True)
+
+    def get_property_location(self, obj):
+        prop = obj.property
+        return {
+            "address": prop.address,
+            "latitude": str(prop.latitude) if prop.latitude is not None else None,
+            "longitude": str(prop.longitude) if prop.longitude is not None else None,
+        }
 
 
 class GuestDetailInputSerializer(serializers.Serializer):

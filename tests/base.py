@@ -85,6 +85,7 @@ class BaseTestCase(TestCase):
             country=cls.country, region=cls.region, city=cls.city,
             district=cls.district, area=cls.area, address="1 Ocean Rd",
             max_guests=4, bedrooms=2, beds=2, bathrooms=2,
+            latitude=Decimal("-6.7721"), longitude=Decimal("39.2401"),
             base_price=Decimal("50000"), currency="TZS",
             cleaning_fee=Decimal("10000"), min_nights=1,
             cancellation_policy=cls.policy,

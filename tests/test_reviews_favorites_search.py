@@ -38,8 +38,9 @@ def _completed_booking(tc) -> Booking:
         "MOCK", body, {"x-webhook-signature": mock_webhook_signature(body)}
     )
     booking.refresh_from_db()
+    booking.refresh_from_db()
     booking.check_in = timezone.now().date()
-    booking.save()
+    booking.save(update_fields=["check_in", "updated_at"])
     booking_services.check_in(booking, tc.host)
     booking_services.complete_booking(booking, tc.host)
     booking.refresh_from_db()

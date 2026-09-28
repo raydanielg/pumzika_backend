@@ -252,6 +252,18 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.bookings.tasks.send_review_reminders",
         "schedule": 60 * 60 * 6,
     },
+    "reconcile-pending-payments": {
+        "task": "apps.payments.tasks.reconcile_pending_payments",
+        "schedule": 60 * 5,  # every 5 min
+    },
+    "retry-failed-webhooks": {
+        "task": "apps.notifications.tasks.retry_failed_webhooks",
+        "schedule": 60 * 10,
+    },
+    "cleanup-stale-notifications": {
+        "task": "apps.notifications.tasks.cleanup_stale_notifications",
+        "schedule": 60 * 60 * 24,  # daily
+    },
 }
 
 # --------------------------------------------------------------------------

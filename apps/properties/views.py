@@ -80,6 +80,7 @@ class PropertyViewSet(viewsets.ModelViewSet):
         mine = self.request.query_params.get("mine") == "true"
         if user.is_authenticated and (mine or self.action in {
             "update", "partial_update", "destroy", "submit_review", "archive",
+            "publish", "unpublish",
             "images", "delete_image", "set_cover", "reorder_images",
             "rules", "delete_rule", "special_pricings", "delete_special_pricing",
         }):
@@ -161,6 +162,21 @@ class PropertyViewSet(viewsets.ModelViewSet):
     def archive(self, request, pk=None):
         prop = services.archive_property(self.get_object())
         audit(actor=request.user, action="property.archived", target=prop, request=request)
+        return Response(PropertyHostSerializer(prop).data)
+
+    @decorators.action(detail=True, methods=["post"])
+    def publish(self, request, pk=None):
+        """Host publishes an APPROVED listing."""
+        prop = services.publish_property(self.get_object())
+        audit(actor=request.user, action="property.published",
+              target=prop, request=request)
+        return Response(PropertyHostSerializer(prop).data)
+
+    @decorators.action(detail=True, methods=["post"])
+    def unpublish(self, request, pk=None):
+        prop = services.unpublish_property(self.get_object())
+        audit(actor=request.user, action="property.unpublished",
+              target=prop, request=request)
         return Response(PropertyHostSerializer(prop).data)
 
     # ---- images ------------------------------------------------------------

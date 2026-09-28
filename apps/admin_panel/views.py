@@ -171,13 +171,9 @@ class PropertyApproveView(APIView):
         prop = Property.objects.filter(pk=pk).first()
         if prop is None:
             raise NotFoundError("Property not found.", code="PROPERTY_NOT_FOUND")
-        prop = property_services.approve_property(prop)
+        prop = property_services.approve_property(prop, admin=request.user)
         audit(actor=request.user, action="property.approved", target=prop,
               request=request)
-        from apps.notifications.services import notify
-
-        notify(prop.host, "PROPERTY_APPROVED",
-               f"{prop.title} approved", "Your property is now live.")
         return Response({"status": prop.status})
 
 
@@ -194,10 +190,6 @@ class PropertyRejectView(APIView):
         prop = property_services.reject_property(prop, reason)
         audit(actor=request.user, action="property.rejected", target=prop,
               request=request, metadata={"reason": reason})
-        from apps.notifications.services import notify
-
-        notify(prop.host, "PROPERTY_REJECTED",
-               f"{prop.title} needs changes", reason)
         return Response({"status": prop.status})
 
 

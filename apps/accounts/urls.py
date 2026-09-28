@@ -23,4 +23,7 @@ user_urlpatterns = [
     path("me/deactivate/", views.MeDeactivateView.as_view(), name="me-deactivate"),
     path("me/delete/", views.MeDeleteView.as_view(), name="me-delete"),
     path("me/host-profile/", views.MyHostProfileView.as_view(), name="me-host-profile"),
+    path("me/sessions/", views.SessionListView.as_view(), name="me-sessions"),
+    path("me/sessions/revoke-all/", views.SessionRevokeView.as_view(), name="me-sessions-revoke-all"),
+    path("me/sessions/<str:jti>/revoke/", views.SessionRevokeView.as_view(), name="me-session-revoke"),
 ]

@@ -47,6 +47,9 @@ def register_user(*, email: str, password: str, first_name: str, last_name: str,
             user=user, defaults={"display_name": user.full_name}
         )
     send_email_verification(user)
+    from apps.notifications.tasks import notify_welcome
+
+    transaction.on_commit(lambda: notify_welcome.delay(str(user.id)))
     return user
 
 
@@ -129,6 +132,14 @@ def request_password_reset(email: str) -> None:
     _dispatch_code(user, VerificationCode.Purpose.PASSWORD_RESET, user.email, code)
 
 
+def _security_alert(user: User, event: str) -> None:
+    from apps.notifications.tasks import notify_security_alert
+
+    transaction.on_commit(
+        lambda: notify_security_alert.delay(str(user.id), event)
+    )
+
+
 @transaction.atomic
 def confirm_password_reset(email: str, code: str, new_password: str) -> None:
     user = User.objects.filter(email__iexact=email, is_active=True).first()
@@ -137,6 +148,7 @@ def confirm_password_reset(email: str, code: str, new_password: str) -> None:
     _consume_code(user, VerificationCode.Purpose.PASSWORD_RESET, code)
     user.set_password(new_password)
     user.save(update_fields=["password", "updated_at"])
+    _security_alert(user, "Password was reset")
 
 
 @transaction.atomic
@@ -145,6 +157,7 @@ def change_password(user: User, old_password: str, new_password: str) -> None:
         raise BusinessError("Current password is incorrect.", code="INVALID_PASSWORD")
     user.set_password(new_password)
     user.save(update_fields=["password", "updated_at"])
+    _security_alert(user, "Password was changed")
 
 
 @transaction.atomic

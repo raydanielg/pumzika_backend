@@ -201,6 +201,8 @@ def booking_payment_deadline():
 @transaction.atomic
 def mark_awaiting_payment(booking: Booking) -> None:
     booking = Booking.objects.select_for_update().get(pk=booking.pk)
+    if booking.status == Booking.Status.AWAITING_PAYMENT:
+        return  # retry initiation — already awaiting payment
     _transition(booking, Booking.Status.AWAITING_PAYMENT)
     booking.save(update_fields=["status", "updated_at"])
 
@@ -278,12 +280,25 @@ def cancel_booking(booking: Booking, cancelled_by, reason: str = "") -> Booking:
 
 @transaction.atomic
 def expire_booking(booking: Booking) -> None:
-    """Payment window elapsed — release the dates."""
+    """Payment window elapsed — release the dates, void stale payments."""
     booking = Booking.objects.select_for_update().get(pk=booking.pk)
     if booking.status in (Booking.Status.PENDING, Booking.Status.AWAITING_PAYMENT):
         _transition(booking, Booking.Status.EXPIRED, note="Payment window expired")
         booking.save(update_fields=["status", "updated_at"])
         availability.release_dates(booking.property, booking.check_in, booking.check_out)
+        # Any still-open payment for this booking is dead.
+        from apps.payments.models import Payment
+
+        Payment.objects.filter(
+            booking=booking,
+            status__in=[Payment.Status.PENDING, Payment.Status.PROCESSING],
+        ).update(status=Payment.Status.EXPIRED, updated_at=timezone.now())
+
+        from apps.notifications.tasks import notify_booking_expired
+
+        transaction.on_commit(
+            lambda: notify_booking_expired.delay(str(booking.id))
+        )
 
 
 @transaction.atomic

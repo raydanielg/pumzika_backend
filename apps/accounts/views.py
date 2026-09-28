@@ -211,6 +211,60 @@ class MeDeleteView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class SessionListView(APIView):
+    """Active login sessions — one row per outstanding refresh token."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer  # docs hint only
+
+    def get(self, request):
+        from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+
+        current_jti = getattr(
+            getattr(request, "auth", None), "get", lambda *_: None
+        )("jti")
+        sessions = OutstandingToken.objects.filter(
+            user=request.user
+        ).exclude(
+            blacklistedtoken__isnull=False
+        ).order_by("-created_at")
+        data = [{
+            "jti": t.jti,
+            "created_at": t.created_at,
+            "expires_at": t.expires_at,
+            "is_current": t.jti == current_jti,
+        } for t in sessions]
+        return Response(data)
+
+
+class SessionRevokeView(APIView):
+    """Revoke a session by its refresh-token jti (or all but current)."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def post(self, request, jti=None):
+        from rest_framework_simplejwt.token_blacklist.models import (
+            BlacklistedToken, OutstandingToken,
+        )
+
+        qs = OutstandingToken.objects.filter(user=request.user)
+        if jti:
+            qs = qs.filter(jti=jti)
+        else:  # revoke-all keeps the current session alive
+            current_jti = getattr(
+                getattr(request, "auth", None), "get", lambda *_: None
+            )("jti")
+            if current_jti:
+                qs = qs.exclude(jti=current_jti)
+        for token in qs:
+            BlacklistedToken.objects.get_or_create(token=token)
+        audit(actor=request.user,
+              action="session.revoked" if jti else "session.revoked_all",
+              request=request, metadata={"jti": jti} if jti else None)
+        return Response({"detail": "Session(s) revoked."})
+
+
 class MyHostProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = HostProfileSerializer

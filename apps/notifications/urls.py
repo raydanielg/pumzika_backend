@@ -11,4 +11,7 @@ urlpatterns = [
     path("<uuid:pk>/read/", views.MarkReadView.as_view(), name="read-one"),
     path("unread-count/", views.UnreadCountView.as_view(), name="unread-count"),
     path("preferences/", views.PreferenceListUpdateView.as_view(), name="preferences"),
+    path("settings/", views.SettingsView.as_view(), name="settings"),
+    path("devices/", views.DeviceListCreateView.as_view(), name="devices"),
+    path("devices/<uuid:pk>/", views.DeviceDeleteView.as_view(), name="device-delete"),
 ]

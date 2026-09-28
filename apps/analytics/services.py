@@ -25,7 +25,9 @@ def dashboard_metrics() -> dict:
     properties = Property.objects.aggregate(
         total=Count("id"),
         published=Count("id", filter=Q(status=Property.Status.PUBLISHED)),
-        pending=Count("id", filter=Q(status=Property.Status.PENDING_REVIEW)),
+        pending=Count("id", filter=Q(status__in=[
+            Property.Status.SUBMITTED, Property.Status.UNDER_REVIEW,
+        ])),
     )
     bookings = Booking.objects.aggregate(
         total=Count("id"),

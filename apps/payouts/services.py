@@ -118,6 +118,11 @@ def request_payout(user, method_id, amount: Decimal,
     HostWallet.objects.filter(pk=wallet.id).update(
         pending_balance=F("pending_balance") + amount
     )
+    from apps.notifications.tasks import notify_payout_requested
+
+    transaction.on_commit(
+        lambda: notify_payout_requested.delay(str(payout.id))
+    )
     return payout
 
 
@@ -152,6 +157,11 @@ def process_payout(admin_user, payout_id, approve: bool, reason: str = "") -> Pa
         )
         _post(wallet.id, WalletTransaction.Type.REVERSAL, payout.amount,
               description=f"Reversal of payout {payout.reference}", payout=payout)
+        from apps.notifications.tasks import notify_payout_failed
+
+        transaction.on_commit(
+            lambda: notify_payout_failed.delay(str(payout.id))
+        )
     audit(actor=admin_user,
           action=f"payout.{'approved' if approve else 'rejected'}",
           target=payout, metadata={"reason": reason} if reason else None)

@@ -66,6 +66,12 @@ def submit_for_review(user) -> KYCVerification:
     profile.submitted_at = timezone.now()
     profile.save(update_fields=["status", "submitted_at", "updated_at"])
     _record_status(profile, KYCStatus.UNDER_REVIEW, changed_by=user)
+
+    from apps.notifications.tasks import notify_kyc_submitted
+
+    transaction.on_commit(
+        lambda: notify_kyc_submitted.delay(str(user.id))
+    )
     return verification
 
 
@@ -120,6 +126,16 @@ def review_verification(reviewer, verification_id, decision: str, reason: str = 
                 if new_status == KYCStatus.REJECTED
                 else HostProfile.VerificationStatus.PENDING
             )
+        )
+    )
+
+    from apps.notifications.tasks import notify_kyc_decision
+
+    transaction.on_commit(
+        lambda: notify_kyc_decision.delay(
+            str(profile.user_id),
+            new_status == KYCStatus.VERIFIED,
+            reason,
         )
     )
     return verification

@@ -80,7 +80,7 @@ def update_property(prop: Property, data: dict, amenity_ids: list | None = None)
         set_amenities(prop, amenity_ids)
     # Any material change to a live listing sends it back to review.
     if prop.status == Property.Status.PUBLISHED and data:
-        prop.status = Property.Status.PENDING_REVIEW
+        prop.status = Property.Status.SUBMITTED
         prop.save(update_fields=["status", "updated_at"])
     return prop
 
@@ -93,45 +93,104 @@ def set_amenities(prop: Property, amenity_ids: list) -> None:
     prop.amenities.set(amenities)
 
 
-def publish_readiness_errors(prop: Property) -> list[str]:
-    """Everything required before a property can be publicly bookable."""
-    errors: list[str] = []
+def _min_images() -> int:
+    from apps.admin_panel.models import PlatformSetting
+
+    try:
+        return int(PlatformSetting.get("MIN_PROPERTY_IMAGES", 3))
+    except (TypeError, ValueError):
+        return 3
+
+
+def submission_errors(prop: Property) -> dict[str, str]:
+    """Field-level reasons a property cannot be submitted for review."""
+    errors: dict[str, str] = {}
+    if not prop.title:
+        errors["title"] = "Title is required."
+    if not prop.description:
+        errors["description"] = "Description is required."
+    if prop.property_type_id is None:
+        errors["property_type"] = "Property type is required."
+    if prop.city_id is None:
+        errors["city"] = "A city is required."
+    if not prop.base_price or prop.base_price <= 0:
+        errors["base_price"] = "A valid base price is required."
+    if prop.max_guests < 1:
+        errors["max_guests"] = "Guest capacity is required."
+    image_count = prop.images.count()
+    min_images = _min_images()
+    if image_count < min_images:
+        errors["images"] = f"At least {min_images} images are required."
+    if not prop.images.filter(is_cover=True).exists():
+        errors["cover_image"] = "A cover image is required."
+    if not prop.amenities.exists():
+        errors["amenities"] = "At least one amenity is required."
+    if prop.cancellation_policy_id is None:
+        errors["cancellation_policy"] = "A cancellation policy is required."
     profile = getattr(prop.host, "host_profile", None)
     if profile is None or not profile.can_publish:
-        errors.append("Host identity verification (KYC) must be approved.")
-    if prop.status == Property.Status.SUSPENDED:
-        errors.append("Property is suspended.")
-    if not prop.images.exists():
-        errors.append("At least one image is required.")
-    if not prop.base_price or prop.base_price <= 0:
-        errors.append("A valid base price is required.")
-    if not prop.city_id:
-        errors.append("A city is required.")
-    if prop.cancellation_policy_id is None:
-        errors.append("A cancellation policy is required.")
+        errors["host_kyc"] = "Host identity verification (KYC) must be approved."
     return errors
+
+
+def publish_readiness_errors(prop: Property) -> list[str]:
+    """Flat list for backwards-compat / quick checks."""
+    return list(submission_errors(prop).values())
 
 
 @transaction.atomic
 def submit_for_review(prop: Property) -> Property:
-    if prop.status not in (Property.Status.DRAFT, Property.Status.REJECTED,
-                           Property.Status.PENDING_REVIEW):
+    if prop.status not in (Property.Status.DRAFT, Property.Status.REJECTED):
         raise BusinessError("Only draft or rejected properties can be submitted.",
                             code="INVALID_STATE")
-    prop.status = Property.Status.PENDING_REVIEW
+    errors = submission_errors(prop)
+    if errors:
+        raise BusinessError("Property is incomplete.", code="PROPERTY_INCOMPLETE",
+                            details=errors)
+    prop.status = Property.Status.SUBMITTED
     prop.rejection_reason = ""
     prop.save(update_fields=["status", "rejection_reason", "updated_at"])
+
+    from apps.notifications.tasks import notify_property_event
+
+    transaction.on_commit(
+        lambda: notify_property_event.delay(str(prop.id), "PROPERTY_SUBMITTED")
+    )
     return prop
 
 
 @transaction.atomic
-def approve_property(prop: Property) -> Property:
-    errors = publish_readiness_errors(prop)
-    if errors:
+def approve_property(prop: Property, admin=None) -> Property:
+    """Staff approval — the listing may then be published by the host."""
+    if prop.status not in (Property.Status.SUBMITTED, Property.Status.UNDER_REVIEW):
+        raise BusinessError("Only submitted properties can be approved.",
+                            code="INVALID_STATE")
+    prop.status = Property.Status.APPROVED
+    prop.approved_by = admin
+    prop.approved_at = timezone.now()
+    prop.rejection_reason = ""
+    prop.save(update_fields=["status", "approved_by", "approved_at",
+                             "rejection_reason", "updated_at"])
+
+    from apps.notifications.tasks import notify_property_event
+
+    transaction.on_commit(
+        lambda: notify_property_event.delay(str(prop.id), "PROPERTY_APPROVED")
+    )
+    return prop
+
+
+@transaction.atomic
+def publish_property(prop: Property) -> Property:
+    """Host publishes an approved listing — final readiness re-check."""
+    if prop.status != Property.Status.APPROVED:
         raise BusinessError(
-            "Property is not ready to publish.", code="NOT_PUBLISHABLE",
-            details={"errors": errors},
+            "Only approved properties can be published.", code="INVALID_STATE"
         )
+    errors = submission_errors(prop)
+    if errors:
+        raise BusinessError("Property is incomplete.", code="PROPERTY_INCOMPLETE",
+                            details=errors)
     prop.status = Property.Status.PUBLISHED
     prop.published_at = timezone.now()
     prop.save(update_fields=["status", "published_at", "updated_at"])
@@ -139,18 +198,54 @@ def approve_property(prop: Property) -> Property:
 
 
 @transaction.atomic
+def unpublish_property(prop: Property) -> Property:
+    """Host takes a listing offline — it goes back to draft."""
+    if prop.status != Property.Status.PUBLISHED:
+        raise BusinessError("Only published properties can be unpublished.",
+                            code="INVALID_STATE")
+    prop.status = Property.Status.DRAFT
+    prop.save(update_fields=["status", "updated_at"])
+    return prop
+
+
+@transaction.atomic
 def reject_property(prop: Property, reason: str) -> Property:
+    if not reason:
+        raise BusinessError("A rejection reason is required.",
+                            code="REASON_REQUIRED")
     prop.status = Property.Status.REJECTED
     prop.rejection_reason = reason
-    prop.save(update_fields=["status", "rejection_reason", "updated_at"])
+    prop.approved_by = None
+    prop.approved_at = None
+    prop.save(update_fields=["status", "rejection_reason", "approved_by",
+                             "approved_at", "updated_at"])
+
+    from apps.notifications.tasks import notify_property_event
+
+    transaction.on_commit(
+        lambda: notify_property_event.delay(
+            str(prop.id), "PROPERTY_REJECTED", reason
+        )
+    )
     return prop
 
 
 @transaction.atomic
 def suspend_property(prop: Property, reason: str = "") -> Property:
+    if not reason:
+        raise BusinessError("A suspension reason is required.",
+                            code="REASON_REQUIRED")
     prop.status = Property.Status.SUSPENDED
     prop.rejection_reason = reason
     prop.save(update_fields=["status", "rejection_reason", "updated_at"])
+
+    from apps.notifications.tasks import notify_property_event
+
+    transaction.on_commit(
+        lambda: notify_property_event.delay(
+            str(prop.id), "PROPERTY_SUSPENDED", reason
+        )
+    )
     return prop
 
 

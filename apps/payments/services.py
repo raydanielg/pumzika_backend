@@ -55,6 +55,12 @@ def initiate_payment(user, *, booking_id, provider_code: str,
 
     Idempotent: the same idempotency_key always returns the same Payment.
     """
+    if not idempotency_key:
+        # No client key — derive a unique one so the column stays non-null.
+        import uuid
+
+        idempotency_key = f"auto-{uuid.uuid4().hex[:24]}"
+
     booking = (
         Booking.objects.select_for_update()
         .select_related("price", "property")
@@ -84,9 +90,13 @@ def initiate_payment(user, *, booking_id, provider_code: str,
                             code="CURRENCY_NOT_SUPPORTED")
 
     # Idempotent replay — return the existing payment untouched.
-    existing = Payment.objects.filter(idempotency_key=idempotency_key).first()
+    existing = Payment.objects.filter(
+        idempotency_key=idempotency_key, booking__guest=user
+    ).first()
     if existing is not None:
         return existing
+
+    from apps.notifications.tasks import notify_payment_pending
 
     payment = Payment.objects.create(
         booking=booking,
@@ -122,6 +132,9 @@ def initiate_payment(user, *, booking_id, provider_code: str,
     payment.save(update_fields=["external_reference", "metadata", "updated_at"])
 
     booking_services.mark_awaiting_payment(booking)
+    transaction.on_commit(
+        lambda: notify_payment_pending.delay(str(payment.id))
+    )
     return payment
 
 
@@ -160,6 +173,8 @@ def process_webhook(provider_code: str, body: bytes, headers: dict) -> WebhookEv
             "event_type": data.event_type,
             "payload_hash": _payload_hash(body),
             "payload": data.payload or {},
+            "raw_body": body,
+            "raw_signature": headers.get("x-webhook-signature", ""),
         },
     )
     if not created:
@@ -204,6 +219,9 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
                                     "updated_at"])
         booking_services.confirm_booking(payment.booking,
                                          note="Payment confirmed via webhook")
+        transaction.on_commit(
+            lambda: _notify_payment_success(payment.id)
+        )
 
     elif data.event_type in ("payment.failed", "payment.cancelled", "payment.expired"):
         status_map = {
@@ -216,15 +234,36 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
                             new_status, data.external_reference, data.payload)
         payment.status = new_status
         payment.save(update_fields=["status", "updated_at"])
-        if payment.booking.status in (Booking.Status.PENDING,
-                                      Booking.Status.AWAITING_PAYMENT):
-            booking_services.expire_booking(payment.booking)
+        # The booking stays payable — a failed payment does NOT kill it.
+        # The booking's own expiry window (expire_unpaid_bookings) is the
+        # single authority on when held dates are released.
+        transaction.on_commit(
+            lambda: _notify_payment_failed(payment.id)
+        )
 
     elif data.event_type == "refund.success":
         _handle_refund_success(data)
 
     else:
         event.status = WebhookEvent.Status.IGNORED
+
+
+def _notify_refund_initiated(refund_id) -> None:
+    from apps.notifications.tasks import notify_refund_initiated
+
+    notify_refund_initiated.delay(str(refund_id))
+
+
+def _notify_payment_success(payment_id) -> None:
+    from apps.notifications.tasks import notify_payment_success
+
+    notify_payment_success.delay(str(payment_id))
+
+
+def _notify_payment_failed(payment_id) -> None:
+    from apps.notifications.tasks import notify_payment_failed
+
+    notify_payment_failed.delay(str(payment_id))
 
 
 def _find_payment(data) -> Payment | None:
@@ -244,8 +283,15 @@ def _find_payment(data) -> Payment | None:
 
 @transaction.atomic
 def initiate_refund(*, booking: Booking, amount: Decimal, reason: str,
-                    requested_by=None) -> Refund | None:
+                    requested_by=None, idempotency_key: str | None = None
+                    ) -> Refund | None:
     """Create a refund against the booking's successful payment."""
+    if idempotency_key:
+        existing = Refund.objects.filter(
+            idempotency_key=idempotency_key, booking=booking
+        ).first()
+        if existing is not None:
+            return existing
     payment = (
         Payment.objects.select_for_update()
         .filter(booking=booking, status__in=[Payment.Status.SUCCESS,
@@ -262,6 +308,10 @@ def initiate_refund(*, booking: Booking, amount: Decimal, reason: str,
     refund = Refund.objects.create(
         payment=payment, booking=booking, amount=amount,
         currency=payment.currency, reason=reason, requested_by=requested_by,
+        idempotency_key=idempotency_key or None,
+    )
+    transaction.on_commit(
+        lambda: _notify_refund_initiated(refund.id)
     )
     provider = get_provider(payment.provider.code)
     try:

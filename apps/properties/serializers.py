@@ -1,6 +1,8 @@
 """Property serializers."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from .models import (
@@ -99,6 +101,11 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
     )
     host_verified = serializers.SerializerMethodField()
     cover_image = serializers.SerializerMethodField()
+    # Location privacy: exact coordinates/address are only revealed to a
+    # guest with a confirmed booking — the public gets an approximate pin.
+    approximate_latitude = serializers.SerializerMethodField()
+    approximate_longitude = serializers.SerializerMethodField()
+    exact_location_available = serializers.SerializerMethodField()
 
     class Meta:
         model = Property
@@ -107,7 +114,8 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
             "country", "country_name", "country_code",
             "region", "region_name", "city", "city_name",
             "district", "area",
-            "latitude", "longitude",
+            "approximate_latitude", "approximate_longitude",
+            "exact_location_available",
             "max_guests", "bedrooms", "beds", "bathrooms",
             "base_price", "currency", "cleaning_fee",
             "min_nights", "max_nights",
@@ -129,9 +137,23 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
         first = obj.images.first()
         return PropertyImageSerializer(first).data if first else None
 
+    @staticmethod
+    def _approx(value):
+        # ~1.1 km rounding — enough for discovery, not enough to find the door.
+        return str(value.quantize(Decimal("0.01"))) if value is not None else None
+
+    def get_approximate_latitude(self, obj):
+        return self._approx(obj.latitude)
+
+    def get_approximate_longitude(self, obj):
+        return self._approx(obj.longitude)
+
+    def get_exact_location_available(self, obj) -> bool:
+        return False
+
 
 class PropertyHostSerializer(PropertyPublicSerializer):
-    """Host's own view — includes workflow fields."""
+    """Host's own view — includes workflow fields and the real address."""
 
     policy = PropertyPolicySerializer(read_only=True)
     rules = PropertyRuleSerializer(many=True, read_only=True)
@@ -140,10 +162,14 @@ class PropertyHostSerializer(PropertyPublicSerializer):
 
     class Meta(PropertyPublicSerializer.Meta):
         fields = PropertyPublicSerializer.Meta.fields + [
-            "status", "address", "rejection_reason", "published_at",
+            "status", "address", "latitude", "longitude", "rejection_reason",
+            "published_at", "approved_at",
             "cancellation_policy", "policy", "rules", "special_pricings",
             "readiness_errors", "updated_at",
         ]
+
+    def get_exact_location_available(self, obj) -> bool:
+        return True
 
     def get_readiness_errors(self, obj):
         from .services import publish_readiness_errors

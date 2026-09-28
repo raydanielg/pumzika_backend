@@ -142,6 +142,9 @@ class Refund(UUIDModel):
         on_delete=models.SET_NULL, related_name="refunds_requested",
     )
     external_reference = models.CharField(max_length=128, blank=True)
+    idempotency_key = models.CharField(
+        max_length=64, null=True, blank=True, unique=True,
+    )
     processed_at = models.DateTimeField(null=True, blank=True)
 
 
@@ -170,6 +173,8 @@ class WebhookEvent(UUIDModel):
     external_event_id = models.CharField(max_length=128, db_index=True)
     payload_hash = models.CharField(max_length=64)
     payload = models.JSONField(default=dict)
+    raw_body = models.BinaryField(null=True, blank=True)
+    raw_signature = models.CharField(max_length=512, blank=True)
     received_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(

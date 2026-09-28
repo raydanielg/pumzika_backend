@@ -1,0 +1,5 @@
+Receipt for payment {{ payment_reference }} — {{ amount }} {{ currency }}.
+
+If you did not request this, contact support.
+
+— The Pumzika Africa team

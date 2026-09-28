@@ -216,9 +216,12 @@ class Command(BaseCommand):
         )
         host.set_password("Host123!x")
         host.save()
-        HostProfile.objects.get_or_create(
+        HostProfile.objects.update_or_create(
             user=host,
-            defaults={"display_name": "Dev Host"},
+            defaults={
+                "display_name": "Dev Host",
+                "verification_status": HostProfile.VerificationStatus.VERIFIED,
+            },
         )
 
         guest, _ = User.objects.get_or_create(

@@ -82,6 +82,54 @@ class PaymentDetailView(generics.RetrieveAPIView):
         return qs.filter(booking__guest=user)
 
 
+class PaymentReceiptView(APIView):
+    """Structured receipt for a successful payment — guest or staff only."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = PaymentSerializer
+
+    def get(self, request, pk):
+        payment = Payment.objects.select_related(
+            "provider", "booking__guest", "booking__property"
+        ).filter(pk=pk).first()
+        if payment is None:
+            from apps.common.exceptions import NotFoundError
+
+            raise NotFoundError("Payment not found.", code="PAYMENT_NOT_FOUND")
+        if not (
+            payment.booking.guest_id == request.user.id
+            or request.user.is_staff_role
+        ):
+            from apps.common.exceptions import PermissionDeniedError
+
+            raise PermissionDeniedError("You cannot view this receipt.")
+        if payment.status not in (Payment.Status.SUCCESS,
+                                  Payment.Status.PARTIALLY_REFUNDED,
+                                  Payment.Status.REFUNDED):
+            from apps.common.exceptions import BusinessError
+
+            raise BusinessError("No receipt for an unpaid payment.",
+                                code="RECEIPT_UNAVAILABLE")
+        booking = payment.booking
+        return Response({
+            "receipt_reference": f"RCT-{payment.reference}",
+            "payment_reference": payment.reference,
+            "booking_reference": booking.reference,
+            "external_reference": payment.external_reference,
+            "provider": payment.provider.code,
+            "amount": str(payment.amount),
+            "currency": payment.currency,
+            "status": payment.status,
+            "paid_at": payment.paid_at,
+            "property": {"id": str(booking.property_id),
+                         "title": booking.property.title},
+            "guest": {"id": str(booking.guest_id),
+                      "name": booking.guest.full_name,
+                      "email": booking.guest.email},
+            "issued_at": payment.updated_at,
+        })
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ProviderWebhookView(APIView):
     """POST /api/v1/payments/webhooks/<provider>/
@@ -123,6 +171,7 @@ class AdminRefundView(APIView):
             amount=serializer.validated_data["amount"],
             reason=serializer.validated_data.get("reason", "Admin refund"),
             requested_by=request.user,
+            idempotency_key=request.headers.get("Idempotency-Key"),
         )
         audit(actor=request.user, action="payment.refund",
               target=refund or payment, request=request)

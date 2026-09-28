@@ -61,7 +61,9 @@ class Amenity(TimeStampedModel):
 class Property(UUIDModel):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
-        PENDING_REVIEW = "PENDING_REVIEW", "Pending Review"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        UNDER_REVIEW = "UNDER_REVIEW", "Under Review"
+        APPROVED = "APPROVED", "Approved"
         PUBLISHED = "PUBLISHED", "Published"
         SUSPENDED = "SUSPENDED", "Suspended"
         REJECTED = "REJECTED", "Rejected"
@@ -121,6 +123,11 @@ class Property(UUIDModel):
         max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True
     )
     published_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="properties_approved",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True)
 
     rating = models.DecimalField(max_digits=3, decimal_places=2, default=0, db_index=True)
