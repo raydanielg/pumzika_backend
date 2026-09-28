@@ -24,6 +24,7 @@ from apps.properties.models import Property
 BLOCKING = [
     AvailabilityStatus.UNAVAILABLE,
     AvailabilityStatus.BLOCKED,
+    AvailabilityStatus.BOOKED,
     AvailabilityStatus.MAINTENANCE,
 ]
 

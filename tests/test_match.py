@@ -24,7 +24,7 @@ class MatchEndpointTests(BaseTestCase):
         return base
 
     def test_anonymous_match_returns_enveloped_results(self):
-        r = self._guest().post(URL, self._payload(), format="json")
+        r = self.auth_client(self.guest).post(URL, self._payload(), format="json")
         assert r.status_code == 200
         body = r.json()
         assert body["success"] is True
@@ -79,7 +79,7 @@ class MatchEndpointTests(BaseTestCase):
             "expand_destination"}
 
     def test_capacity_excludes_too_small_property(self):
-        r = self.client.post(URL, self._payload(guests=99), format="json")
+        r = self.client.post(URL, self._payload(guests=9), format="json")
         assert r.json()["data"]["count"] == 0
 
     def test_booked_property_excluded(self):
