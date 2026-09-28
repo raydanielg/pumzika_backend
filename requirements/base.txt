@@ -16,3 +16,4 @@ python-dotenv>=1.0,<2.0
 phonenumbers>=8.13,<9.0
 argon2-cffi>=23.1,<24.0
 requests>=2.32,<3.0
+cryptography>=42,<44

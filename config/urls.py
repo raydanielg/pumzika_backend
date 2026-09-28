@@ -6,7 +6,13 @@ from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from apps.accounts.urls import auth_urlpatterns, user_urlpatterns
-from apps.common.views import HealthDBView, HealthRedisView, HealthView
+from apps.common.views import (
+    HealthDBView,
+    HealthLiveView,
+    HealthReadyView,
+    HealthRedisView,
+    HealthView,
+)
 
 api_v1 = [
     path("auth/", include((auth_urlpatterns, "accounts"), namespace="auth")),
@@ -27,12 +33,15 @@ api_v1 = [
     path("disputes/", include("apps.disputes.urls")),
     path("analytics/", include("apps.analytics.urls")),
     path("admin/", include("apps.admin_panel.urls")),
+    path("admin/security/", include("apps.security.urls")),
 ]
 
 urlpatterns = [
     path("health/", HealthView.as_view(), name="health"),
     path("health/db/", HealthDBView.as_view(), name="health-db"),
     path("health/redis/", HealthRedisView.as_view(), name="health-redis"),
+    path("health/live/", HealthLiveView.as_view(), name="health-live"),
+    path("health/ready/", HealthReadyView.as_view(), name="health-ready"),
     path("admin/", admin.site.urls),
     path("api/v1/", include(api_v1)),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

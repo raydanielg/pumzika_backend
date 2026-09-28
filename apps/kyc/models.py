@@ -7,6 +7,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.common.models import TimeStampedModel, UUIDModel
+from apps.common.validators import secure_upload_to
 
 
 class KYCStatus(models.TextChoices):
@@ -59,7 +60,7 @@ class KYCDocument(UUIDModel):
     )
     document_type = models.CharField(max_length=32, choices=DocumentType.choices)
     # Stored in private storage; never served by a public URL.
-    file = models.FileField(upload_to="kyc/%Y/%m/")
+    file = models.FileField(upload_to=secure_upload_to("kyc"))
     document_number = models.CharField(max_length=100, blank=True)
     issuing_country = models.ForeignKey(
         "locations.Country", null=True, blank=True, on_delete=models.SET_NULL

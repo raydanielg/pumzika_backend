@@ -10,6 +10,7 @@ from django.db import models
 from django.utils import timezone
 
 from apps.common.models import TimeStampedModel
+from apps.common.validators import secure_upload_to
 
 
 class UserManager(BaseUserManager):
@@ -45,7 +46,7 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     phone = models.CharField(max_length=32, unique=True, null=True, blank=True, db_index=True)
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
-    avatar = models.ImageField(upload_to="avatars/%Y/%m/", null=True, blank=True)
+    avatar = models.ImageField(upload_to=secure_upload_to("avatars"), null=True, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     role = models.CharField(max_length=20, choices=Role.choices, default=Role.GUEST, db_index=True)
     country = models.ForeignKey(
@@ -59,6 +60,35 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
     is_active = models.BooleanField(default=True, db_index=True)
     is_staff = models.BooleanField(default=False)  # Django admin-site access
     deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class AccountStatus(models.TextChoices):
+        PENDING_VERIFICATION = "PENDING_VERIFICATION", "Pending Verification"
+        ACTIVE = "ACTIVE", "Active"
+        RESTRICTED = "RESTRICTED", "Restricted"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        DEACTIVATED = "DEACTIVATED", "Deactivated"
+
+    account_status = models.CharField(
+        max_length=20, choices=AccountStatus.choices,
+        default=AccountStatus.ACTIVE, db_index=True,
+    )
+    suspension_reason = models.TextField(blank=True)
+    suspended_at = models.DateTimeField(null=True, blank=True)
+    suspended_by = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="suspensions_issued",
+    )
+    suspension_until = models.DateTimeField(
+        null=True, blank=True, help_text="NULL = indefinite"
+    )
+    last_login_ip = models.GenericIPAddressField(null=True, blank=True)
+    known_ips = models.JSONField(
+        default=list, blank=True,
+        help_text="Capped list of previously seen IPs — new IP = risk signal",
+    )
+    email_verified_at = models.DateTimeField(null=True, blank=True)
+    phone_verified_at = models.DateTimeField(null=True, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
 
     objects = UserManager()
 
@@ -95,11 +125,31 @@ class User(AbstractBaseUser, PermissionsMixin, TimeStampedModel):
 
     def deactivate(self) -> None:
         self.is_active = False
-        self.save(update_fields=["is_active", "updated_at"])
+        self.account_status = self.AccountStatus.DEACTIVATED
+        self.save(update_fields=["is_active", "account_status", "updated_at"])
+
+    @property
+    def is_access_blocked(self) -> bool:
+        # PENDING_VERIFICATION users may still log in — capability gates
+        # (booking, payout) enforce verification separately.
+        return self.account_status in (
+            self.AccountStatus.SUSPENDED, self.AccountStatus.DEACTIVATED,
+        ) or not self.is_active or self.deleted_at is not None
+
+    def has_restriction(self, capability: str) -> bool:
+        """True when an unexpired, unrevoked restriction covers `capability`."""
+        return self.restrictions.filter(
+            capability=capability,
+            revoked_at__isnull=True,
+        ).filter(
+            models.Q(expires_at__isnull=True)
+            | models.Q(expires_at__gt=timezone.now())
+        ).exists()
 
     def soft_delete(self) -> None:
         """Deactivate + anonymise PII while preserving financial/booking history."""
         self.is_active = False
+        self.account_status = self.AccountStatus.DEACTIVATED
         self.deleted_at = timezone.now()
         anonym = self.id.hex[:8]
         self.email = f"deleted-{anonym}@pumzika.invalid"
@@ -142,7 +192,7 @@ class HostProfile(TimeStampedModel):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="host_profile")
     display_name = models.CharField(max_length=150, blank=True)
     bio = models.TextField(blank=True)
-    profile_photo = models.ImageField(upload_to="hosts/%Y/%m/", null=True, blank=True)
+    profile_photo = models.ImageField(upload_to=secure_upload_to("hosts"), null=True, blank=True)
     hosting_status = models.CharField(
         max_length=20, choices=HostingStatus.choices, default=HostingStatus.ACTIVE
     )
@@ -168,6 +218,78 @@ class HostProfile(TimeStampedModel):
             self.hosting_status == self.HostingStatus.ACTIVE
             and self.verification_status == self.VerificationStatus.VERIFIED
         )
+
+
+class SocialAccount(TimeStampedModel):
+    """External identity (Google/Apple) linked to a Pumzika user.
+
+    Identity is (provider, provider_user_id) — never email alone, since
+    email changes and Apple private-relay addresses are not stable keys.
+    """
+
+    class Provider(models.TextChoices):
+        GOOGLE = "GOOGLE", "Google"
+        APPLE = "APPLE", "Apple"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="social_accounts"
+    )
+    provider = models.CharField(max_length=20, choices=Provider.choices)
+    provider_user_id = models.CharField(max_length=255, db_index=True)
+    email = models.EmailField(blank=True)
+    email_verified = models.BooleanField(default=False)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "provider_user_id"],
+                name="unique_social_identity",
+            )
+        ]
+        indexes = [models.Index(fields=["user", "provider"])]
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.provider_user_id[:12]}…"
+
+
+class UserRestriction(TimeStampedModel):
+    """Capability-specific restriction — finer than full suspension.
+
+    e.g. a user may keep browsing but lose BOOKING, or keep their account
+    but lose PAYOUT while a fraud review is open.
+    """
+
+    class Capability(models.TextChoices):
+        BOOKING = "BOOKING", "Booking"
+        HOSTING = "HOSTING", "Hosting"
+        PAYOUT = "PAYOUT", "Payout"
+        MESSAGING = "MESSAGING", "Messaging"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="restrictions"
+    )
+    capability = models.CharField(max_length=20, choices=Capability.choices)
+    reason = models.TextField()
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="restrictions_issued",
+    )
+    expires_at = models.DateTimeField(
+        null=True, blank=True, help_text="NULL = indefinite"
+    )
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="restrictions_revoked",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "capability", "revoked_at"])]
 
 
 class VerificationCode(TimeStampedModel):

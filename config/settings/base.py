@@ -83,6 +83,7 @@ LOCAL_APPS = [
     "apps.reviews",
     "apps.messaging",
     "apps.notifications",
+    "apps.security",
     "apps.favorites",
     "apps.promotions",
     "apps.disputes",
@@ -107,6 +108,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.common.middleware.RequestIDMiddleware",
     "apps.common.middleware.RequestLoggingMiddleware",
+    "apps.common.middleware.AccountStatusMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -363,6 +365,17 @@ SELCOM_TIMEOUT = (
     int(env("SELCOM_CONNECT_TIMEOUT", "5")),
     int(env("SELCOM_READ_TIMEOUT", "20")),
 )
+
+# Social auth — audience (client IDs) come from env; never hardcoded.
+GOOGLE_WEB_CLIENT_ID = env("GOOGLE_WEB_CLIENT_ID", "")
+GOOGLE_ANDROID_CLIENT_ID = env("GOOGLE_ANDROID_CLIENT_ID", "")
+GOOGLE_IOS_CLIENT_ID = env("GOOGLE_IOS_CLIENT_ID", "")
+GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", "")  # legacy single-client fallback
+APPLE_CLIENT_ID = env("APPLE_CLIENT_ID", "")
+APPLE_TEAM_ID = env("APPLE_TEAM_ID", "")
+APPLE_KEY_ID = env("APPLE_KEY_ID", "")
+APPLE_PRIVATE_KEY = env("APPLE_PRIVATE_KEY", "")
+APPLE_REDIRECT_URI = env("APPLE_REDIRECT_URI", "")
 AZAMPAY_APP_NAME = env("AZAMPAY_APP_NAME", "")
 AZAMPAY_CLIENT_ID = env("AZAMPAY_CLIENT_ID", "")
 AZAMPAY_CLIENT_SECRET = env("AZAMPAY_CLIENT_SECRET", "")

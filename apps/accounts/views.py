@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from apps.common.exceptions import BusinessError
 from apps.common.throttles import AuthRateThrottle, StrictAuthRateThrottle
 from apps.admin_panel.services import audit
 
@@ -23,7 +24,11 @@ from .serializers import (
     PasswordResetRequestSerializer,
     PhoneVerifyRequestSerializer,
     ProfileUpdateSerializer,
+    PublicHostProfileSerializer,
     RegisterSerializer,
+    SocialAccountSerializer,
+    SocialLinkSerializer,
+    SocialLoginSerializer,
     UserSerializer,
     VerifyCodeSerializer,
 )
@@ -58,14 +63,129 @@ class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data["email"]
+        from apps.security import services as security_services
+
+        if security_services.is_login_locked(email):
+            raise BusinessError(
+                "Too many failed attempts. Try again later.",
+                code="ACCOUNT_LOCKED", http_status=429,
+            )
         try:
             user = services.authenticate_user(**serializer.validated_data)
         except Exception:
+            security_services.record_login_failure(email, request)
             audit(actor=None, action="user.login_failed",
-                  request=request, metadata={"email": serializer.validated_data.get("email")})
+                  request=request, metadata={"email": email})
             raise
+        security_services.record_login_success(user, request)
         audit(actor=user, action="user.login", request=request)
         return Response({"user": UserSerializer(user).data, "tokens": _tokens_for(user)})
+
+
+class SocialLoginView(APIView):
+    """POST /api/v1/auth/social/<provider>/ — Google/Apple sign-in."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [AuthRateThrottle]
+    serializer_class = SocialLoginSerializer
+
+    def post(self, request, provider: str):
+        serializer = SocialLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        from apps.accounts.social import login as social_login
+        from apps.security import services as security_services
+
+        extra = {k: serializer.validated_data[k]
+                 for k in ("name", "first_name", "last_name")
+                 if k in serializer.validated_data}
+        try:
+            user, is_new = social_login(
+                serializer.token, provider, extra=extra, request=request
+            )
+        except Exception:
+            from apps.security.models import SecurityEvent
+
+            security_services.record_event(
+                SecurityEvent.Type.LOGIN_FAILED, request=request,
+                metadata={"provider": provider.upper()})
+            raise
+        audit(actor=user, action=f"user.social_login:{provider.lower()}",
+              request=request)
+        return Response({
+            "user": UserSerializer(user).data,
+            "tokens": _tokens_for(user),
+            "is_new_user": is_new,
+        })
+
+
+class SocialLinkView(APIView):
+    """POST /api/v1/auth/social/link/ — attach a provider to the session user."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SocialLinkSerializer
+
+    def post(self, request):
+        serializer = SocialLinkSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        from apps.accounts.social import link
+
+        extra = {k: serializer.validated_data[k]
+                 for k in ("first_name", "last_name")
+                 if k in serializer.validated_data}
+        social = link(
+            request.user, serializer.token,
+            serializer.validated_data["provider"], extra=extra,
+            request=request,
+        )
+        audit(actor=request.user,
+              action=f"user.social_linked:{social.provider.lower()}",
+              target=social, request=request)
+        return Response(SocialAccountSerializer(social).data,
+                        status=status.HTTP_201_CREATED)
+
+
+class SocialAccountsView(generics.ListAPIView):
+    """GET /api/v1/auth/social/accounts/ — linked identities."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SocialAccountSerializer
+
+    def get_queryset(self):
+        from .models import SocialAccount
+
+        return SocialAccount.objects.filter(user=self.request.user)
+
+
+class SocialUnlinkView(APIView):
+    """DELETE /api/v1/auth/social/link/<provider>/"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = SocialLinkSerializer  # docs only
+
+    def delete(self, request, provider: str):
+        from apps.accounts.social import unlink
+
+        unlink(request.user, provider.upper(), request=request)
+        audit(actor=request.user,
+              action=f"user.social_unlinked:{provider.lower()}",
+              request=request)
+        return Response({"detail": "Identity unlinked."})
+
+
+class PublicHostProfileView(generics.RetrieveAPIView):
+    """GET /api/v1/users/hosts/<id>/ — safe public host card.
+
+    Never exposes email, phone, KYC, financials or security data.
+    """
+
+    permission_classes = [AllowAny]
+    serializer_class = PublicHostProfileSerializer
+
+    def get_queryset(self):
+        return HostProfile.objects.select_related("user").filter(
+            hosting_status=HostProfile.HostingStatus.ACTIVE
+        )
 
 
 class RefreshView(TokenRefreshView):
@@ -83,6 +203,14 @@ class LogoutView(APIView):
         serializer.is_valid(raise_exception=True)
         token = RefreshToken(serializer.validated_data["refresh"])
         token.blacklist()
+        try:
+            from apps.security.services import record_event
+            from apps.security.models import SecurityEvent
+
+            record_event(SecurityEvent.Type.TOKEN_REVOKED, user=request.user,
+                         request=request)
+        except Exception:
+            pass
         audit(actor=request.user, action="user.logout", request=request)
         return Response({"detail": "Logged out."})
 

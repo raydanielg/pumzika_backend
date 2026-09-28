@@ -79,6 +79,9 @@ def credit_host_for_booking(booking) -> WalletTransaction | None:
 @transaction.atomic
 def request_payout(user, method_id, amount: Decimal,
                    idempotency_key: str | None = None) -> Payout:
+    if user.has_restriction("PAYOUT"):
+        raise BusinessError("Your account is restricted from payouts.",
+                            code="CAPABILITY_RESTRICTED")
     wallet = get_wallet(user)
     if idempotency_key:
         existing = Payout.objects.filter(

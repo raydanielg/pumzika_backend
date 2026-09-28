@@ -47,6 +47,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
         model = User
         fields = ["id", "email", "phone", "first_name", "last_name", "role",
                   "is_active", "is_email_verified", "is_phone_verified",
+                  "account_status", "suspension_reason", "suspended_at",
+                  "suspension_until", "last_seen_at", "last_login_ip",
                   "country", "created_at", "last_login"]
         read_only_fields = ["id", "created_at", "last_login"]
 

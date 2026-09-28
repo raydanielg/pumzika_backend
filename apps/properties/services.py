@@ -19,7 +19,12 @@ def get_host_property(user, property_id) -> Property:
 
 
 def assert_host_can_list(user) -> None:
-    """A suspended host cannot create new bookable listings."""
+    """A suspended/restricted host cannot create new bookable listings."""
+    if user.has_restriction("HOSTING"):
+        raise BusinessError(
+            "Your account is restricted from hosting.",
+            code="CAPABILITY_RESTRICTED", http_status=403,
+        )
     profile = getattr(user, "host_profile", None)
     if profile is None:
         from apps.accounts.models import HostProfile

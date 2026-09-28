@@ -52,6 +52,9 @@ def start_conversation(user, property_id, body: str, booking_id=None) -> Convers
 @transaction.atomic
 def send_message(user, conversation_id, body: str,
                  attachments: list | None = None) -> Message:
+    if user.has_restriction("MESSAGING"):
+        raise BusinessError("Your account is restricted from messaging.",
+                            code="CAPABILITY_RESTRICTED")
     conversation = get_conversation_for_user(user, conversation_id)
     message = conversation.messages.create(sender=user, body=body)
     if attachments:

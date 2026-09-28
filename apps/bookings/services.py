@@ -46,12 +46,15 @@ def _event(booking: Booking, event_type: str, actor=None, note: str = "",
 
 def assert_guest_can_book(guest) -> None:
     """Eligibility gate — suspended/unverified accounts cannot book."""
-    if not guest.is_active or guest.deleted_at:
+    if not guest.is_active or guest.deleted_at or guest.is_access_blocked:
         raise BusinessError("Your account is not able to make bookings.",
                             code="ACCOUNT_INACTIVE")
     if not guest.is_email_verified:
         raise BusinessError("Please verify your email before booking.",
                             code="EMAIL_NOT_VERIFIED")
+    if guest.has_restriction("BOOKING"):
+        raise BusinessError("Your account is restricted from booking.",
+                            code="CAPABILITY_RESTRICTED")
 
 
 def get_booking(booking_id) -> Booking:

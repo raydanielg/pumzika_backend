@@ -8,7 +8,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from apps.common.models import TimeStampedModel, UUIDModel
-from apps.common.validators import validate_image_file
+from apps.common.validators import secure_upload_to, validate_image_file
 
 
 class PropertyType(TimeStampedModel):
@@ -168,7 +168,7 @@ class PropertyImage(UUIDModel):
     property = models.ForeignKey(
         Property, on_delete=models.CASCADE, related_name="images"
     )
-    image = models.ImageField(upload_to="properties/%Y/%m/", validators=[validate_image_file])
+    image = models.ImageField(upload_to=secure_upload_to("properties/images"), validators=[validate_image_file])
     caption = models.CharField(max_length=200, blank=True)
     sort_order = models.PositiveIntegerField(default=0)
     is_cover = models.BooleanField(default=False)
@@ -190,9 +190,9 @@ class PropertyVideo(UUIDModel):
     property = models.ForeignKey(
         Property, on_delete=models.CASCADE, related_name="videos"
     )
-    video = models.FileField(upload_to="properties/videos/%Y/%m/")
+    video = models.FileField(upload_to=secure_upload_to("properties/videos"))
     thumbnail = models.ImageField(
-        upload_to="properties/videos/thumbs/%Y/%m/",
+        upload_to=secure_upload_to("properties/videos/thumbs"),
         validators=[validate_image_file], null=True, blank=True,
     )
     sort_order = models.PositiveIntegerField(default=0)
@@ -262,7 +262,7 @@ class PropertyDocument(UUIDModel):
         Property, on_delete=models.CASCADE, related_name="documents"
     )
     document_type = models.CharField(max_length=30, choices=DocumentType.choices)
-    file = models.FileField(upload_to="property-documents/%Y/%m/")
+    file = models.FileField(upload_to=secure_upload_to("property-documents"))
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
         related_name="uploaded_property_documents",

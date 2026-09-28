@@ -7,6 +7,59 @@ from rest_framework import serializers
 from .models import HostProfile, User
 
 
+class SocialLoginSerializer(serializers.Serializer):
+    """Google: `credential` (id_token). Apple: `identity_token` + optional
+    first-login profile data forwarded once by the client."""
+
+    credential = serializers.CharField(required=False)
+    identity_token = serializers.CharField(required=False)
+    authorization_code = serializers.CharField(required=False, allow_blank=True)
+    name = serializers.DictField(required=False)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get("credential") and not attrs.get("identity_token"):
+            raise serializers.ValidationError(
+                "credential or identity_token is required."
+            )
+        return attrs
+
+    @property
+    def token(self) -> str:
+        return self.validated_data.get("credential") or self.validated_data.get(
+            "identity_token"
+        )
+
+
+class SocialLinkSerializer(serializers.Serializer):
+    provider = serializers.ChoiceField(choices=["GOOGLE", "APPLE"])
+    credential = serializers.CharField(required=False)
+    identity_token = serializers.CharField(required=False)
+
+    def validate(self, attrs):
+        if not attrs.get("credential") and not attrs.get("identity_token"):
+            raise serializers.ValidationError(
+                "credential or identity_token is required."
+            )
+        return attrs
+
+    @property
+    def token(self) -> str:
+        return self.validated_data.get("credential") or self.validated_data.get(
+            "identity_token"
+        )
+
+
+class SocialAccountSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    provider = serializers.CharField()
+    email = serializers.EmailField(allow_blank=True)
+    email_verified = serializers.BooleanField()
+    last_login_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)
@@ -58,6 +111,24 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "preferred_language", "preferred_currency", "country", "phone",
         ]
         extra_kwargs = {f: {"required": False} for f in fields}
+
+
+class PublicHostProfileSerializer(serializers.ModelSerializer):
+    """Public-facing host card — no email, phone, KYC or financial data."""
+
+    member_since = serializers.DateTimeField(source="user.date_joined",
+                                             read_only=True)
+    display_first_name = serializers.CharField(source="user.first_name",
+                                               read_only=True)
+
+    class Meta:
+        model = HostProfile
+        fields = [
+            "id", "display_name", "display_first_name", "bio",
+            "profile_photo", "rating", "response_rate",
+            "response_time_minutes", "total_properties", "member_since",
+        ]
+        read_only_fields = fields
 
 
 class HostProfileSerializer(serializers.ModelSerializer):

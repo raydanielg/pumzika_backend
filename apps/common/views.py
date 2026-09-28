@@ -45,3 +45,39 @@ class HealthRedisView(APIView):
             return Response({"redis": "error"}, status=503)
         except Exception:
             return Response({"redis": "error"}, status=503)
+
+
+@extend_schema(exclude=True)
+class HealthLiveView(APIView):
+    """Liveness — process is running; no dependency checks."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return Response({"status": "alive"})
+
+
+@extend_schema(exclude=True)
+class HealthReadyView(APIView):
+    """Readiness — DB + cache must both respond; 503 when either is down."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        checks = {}
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            checks["database"] = "ok"
+        except Exception:
+            checks["database"] = "error"
+        try:
+            cache.set("health_probe", "ok", timeout=5)
+            checks["redis"] = "ok" if cache.get("health_probe") == "ok" else "error"
+        except Exception:
+            checks["redis"] = "error"
+        healthy = all(v == "ok" for v in checks.values())
+        return Response({"ready": healthy, **checks},
+                        status=200 if healthy else 503)

@@ -4,6 +4,7 @@ All endpoints require granular permission codes, not just role checks.
 """
 from __future__ import annotations
 
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import decorators, filters, generics, status, viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -13,7 +14,7 @@ from rest_framework.views import APIView
 from apps.accounts import constants as perms
 from apps.accounts.models import User
 from apps.analytics.services import dashboard_metrics
-from apps.common.exceptions import NotFoundError
+from apps.common.exceptions import BusinessError, NotFoundError
 from apps.common.permissions import PermissionRequired
 from apps.locations.models import Area, City, Country, District, Region
 from apps.notifications.models import NotificationTemplate
@@ -103,6 +104,8 @@ class AdminUserViewSet(viewsets.ReadOnlyModelViewSet):
         "role": (perms.USER_MANAGE,),
         "deactivate": (perms.USER_MANAGE,),
         "activate": (perms.USER_MANAGE,),
+        "restrict": (perms.USER_MANAGE,),
+        "unrestrict": (perms.USER_MANAGE,),
     }
     serializer_class = AdminUserSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -128,20 +131,66 @@ class AdminUserViewSet(viewsets.ReadOnlyModelViewSet):
 
     @decorators.action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
+        from apps.security.services import suspend_account
+
         user = self.get_object()
-        user.deactivate()
+        suspend_account(user, request.user,
+                        reason=request.data.get("reason", "Admin suspension"),
+                        minutes=request.data.get("minutes"), request=request)
         audit(actor=request.user, action="user.deactivated_by_admin",
               target=user, request=request)
-        return Response({"detail": "User deactivated."})
+        return Response({"detail": "User suspended."})
 
     @decorators.action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
+        from apps.security.services import restore_account
+
         user = self.get_object()
         user.is_active = True
         user.save(update_fields=["is_active", "updated_at"])
+        restore_account(user, request.user, request=request)
         audit(actor=request.user, action="user.activated_by_admin",
               target=user, request=request)
         return Response({"detail": "User activated."})
+
+    @decorators.action(detail=True, methods=["post"])
+    def restrict(self, request, pk=None):
+        """Capability-level restriction: BOOKING | HOSTING | PAYOUT | MESSAGING."""
+        from apps.accounts.models import UserRestriction
+        from apps.security.services import restrict_account
+
+        user = self.get_object()
+        capability = (request.data.get("capability") or "").upper()
+        if capability not in UserRestriction.Capability.values:
+            raise BusinessError("Unknown capability.",
+                                code="INVALID_CAPABILITY")
+        reason = request.data.get("reason", "")
+        if not reason:
+            raise BusinessError("Restriction requires a reason.",
+                                code="REASON_REQUIRED")
+        restriction = restrict_account(
+            user, request.user, capability, reason,
+            minutes=request.data.get("minutes"), request=request,
+        )
+        audit(actor=request.user, action="user.restricted", target=user,
+              request=request,
+              metadata={"capability": capability, "reason": reason})
+        return Response({"restriction_id": str(restriction.id),
+                         "capability": capability,
+                         "expires_at": restriction.expires_at})
+
+    @decorators.action(detail=True, methods=["post"])
+    def unrestrict(self, request, pk=None):
+        user = self.get_object()
+        lifted = user.restrictions.filter(revoked_at__isnull=True).update(
+            revoked_at=timezone.now(), revoked_by=request.user,
+        )
+        if user.account_status == user.AccountStatus.RESTRICTED:
+            user.account_status = user.AccountStatus.ACTIVE
+            user.save(update_fields=["account_status", "updated_at"])
+        audit(actor=request.user, action="user.unrestricted", target=user,
+              request=request, metadata={"lifted": lifted})
+        return Response({"detail": f"{lifted} restriction(s) lifted."})
 
 
 class PendingPropertiesView(generics.ListAPIView):

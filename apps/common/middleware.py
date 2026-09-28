@@ -45,3 +45,44 @@ class RequestLoggingMiddleware:
             },
         )
         return response
+
+
+class AccountStatusMiddleware:
+    """Block suspended/deactivated accounts on every authenticated request."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        user = getattr(request, "user", None)
+        if (
+            user is not None
+            and user.is_authenticated
+            and getattr(user, "is_access_blocked", False)
+        ):
+            from django.http import JsonResponse
+
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "ACCOUNT_SUSPENDED",
+                        "message": "This account is suspended.",
+                    },
+                    "request_id": getattr(request, "request_id", ""),
+                },
+                status=403,
+            )
+        # last_seen activity heartbeat — at most one write per 5 minutes.
+        if user is not None and user.is_authenticated:
+            from django.utils import timezone as _tz
+
+            now = _tz.now()
+            if (
+                user.last_seen_at is None
+                or (now - user.last_seen_at).total_seconds() > 300
+            ):
+                type(user).objects.filter(pk=user.pk).update(
+                    last_seen_at=now
+                )
+        return self.get_response(request)

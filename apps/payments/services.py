@@ -39,6 +39,18 @@ def active_providers():
     return PaymentProvider.objects.filter(is_active=True)
 
 
+def _security_event(event_type: str, user=None, resource=None,
+                    metadata: dict | None = None):
+    """Best-effort security event — never breaks payment processing."""
+    try:
+        from apps.security.services import record_event
+
+        record_event(event_type, user=user, resource=resource,
+                     metadata=metadata)
+    except Exception:
+        logger.exception("security event recording failed")
+
+
 def _record_transaction(payment: Payment, event_type: str, to_status: str,
                         provider_reference: str = "", raw: dict | None = None):
     """Append an immutable ledger row — this does NOT change payment.status."""
@@ -211,6 +223,9 @@ def process_webhook(provider_code: str, body: bytes, headers: dict) -> WebhookEv
             status=WebhookEvent.Status.FAILED, error=str(exc),
             processed_at=timezone.now(),
         )
+        _security_event("WEBHOOK_SIGNATURE_FAILED",
+                        metadata={"provider": provider_code,
+                                  "error_type": type(exc).__name__})
         raise BusinessError("Invalid webhook.", code="INVALID_WEBHOOK",
                             http_status=400)
 
@@ -238,6 +253,16 @@ def process_webhook(provider_code: str, body: bytes, headers: dict) -> WebhookEv
     except Exception as exc:  # keep the event for retry/inspection
         event.status = WebhookEvent.Status.FAILED
         event.error = str(exc)
+        # Emit AFTER rollback — a security event inside the atomic block would
+        # be rolled back with the failed transaction.
+        if getattr(exc, "code", "") in (
+            "PAYMENT_AMOUNT_MISMATCH", "PAYMENT_CURRENCY_MISMATCH"
+        ):
+            _security_event(
+                "PAYMENT_ANOMALY",
+                resource=_find_payment(data),
+                metadata={"detail": exc.code.lower(), "service": "payments"},
+            )
         logger.exception("Webhook processing failed",
                          extra={"provider": provider_code,
                                 "event_id": data.external_event_id})
@@ -245,6 +270,14 @@ def process_webhook(provider_code: str, body: bytes, headers: dict) -> WebhookEv
         event.processed_at = timezone.now()
         event.save()
     return event
+
+
+def _payload_data(payload: dict) -> dict:
+    """Normalize webhook `data` — dict or list depending on the provider."""
+    inner = (payload or {}).get("data")
+    if isinstance(inner, list):
+        return inner[0] if inner else {}
+    return inner or {}
 
 
 def _dispatch_webhook(event: WebhookEvent, data) -> None:
@@ -262,8 +295,9 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
     if data.event_type == "payment.success":
         # Verify the provider-confirmed amount/currency against our record —
         # a mismatched webhook is a reconciliation incident, not a confirm.
-        payload_amount = (data.payload.get("data") or {}).get("amount")
-        payload_currency = (data.payload.get("data") or {}).get("currency")
+        _pd = _payload_data(data.payload)
+        payload_amount = _pd.get("amount")
+        payload_currency = _pd.get("currency")
         if payload_amount is not None and (
             Decimal(str(payload_amount)) != payment.amount
         ):
@@ -279,9 +313,7 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
         if data.external_reference:
             payment.external_reference = data.external_reference
             update.append("external_reference")
-        remote_status = (data.payload.get("data") or [{}])[0].get(
-            "payment_status"
-        ) or (data.payload.get("data") or {}).get("payment_status")
+        remote_status = _payload_data(data.payload).get("payment_status")
         if remote_status:
             payment.provider_status = str(remote_status).upper()
             update.append("provider_status")
@@ -316,7 +348,7 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
         _transition_payment(
             payment, new_status, f"WEBHOOK_{data.event_type.upper()}",
             data.external_reference, data.payload,
-            failure_reason=(data.payload.get("data") or {}).get("reason", ""),
+            failure_reason=_payload_data(data.payload).get("reason", ""),
         )
         # The booking stays payable — a failed payment does NOT kill it.
         # The booking's own expiry window (expire_unpaid_bookings) is the
