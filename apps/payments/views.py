@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from django.db import models
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django_filters.rest_framework import DjangoFilterBackend
@@ -44,13 +45,16 @@ class InitiatePaymentView(APIView):
     def post(self, request):
         serializer = PaymentInitiateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        method_details = dict(serializer.validated_data.get("method_details") or {})
+        if pm := serializer.validated_data.get("payment_method"):
+            method_details.setdefault("method", pm)
         payment = services.initiate_payment(
             request.user,
             booking_id=serializer.validated_data["booking_id"],
             provider_code=serializer.validated_data["provider"],
             idempotency_key=serializer.validated_data["idempotency_key"]
             or request.headers.get("Idempotency-Key"),
-            method_details=serializer.validated_data.get("method_details"),
+            method_details=method_details,
         )
         audit(actor=request.user, action="payment.initiated",
               target=payment, request=request)
@@ -189,3 +193,72 @@ class AdminRefundListView(generics.ListAPIView):
 
     def get_queryset(self):
         return Refund.objects.select_related("payment", "booking").order_by("-created_at")
+
+
+class MyRefundsView(generics.ListAPIView):
+    """Guests see only their own refunds."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = RefundSerializer
+
+    def get_queryset(self):
+        return Refund.objects.filter(
+            payment__booking__guest=self.request.user
+        ).select_related("payment", "booking").order_by("-created_at")
+
+
+class AdminPaymentListView(generics.ListAPIView):
+    """Finance/staff — search all payments."""
+
+    permission_classes = [IsAuthenticated, PermissionRequired]
+    required_permissions = (PAYMENT_VIEW_ALL,)
+    serializer_class = PaymentSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["status", "currency", "provider__code"]
+
+    def get_queryset(self):
+        qs = Payment.objects.select_related(
+            "provider", "booking", "booking__guest", "user"
+        ).prefetch_related("refunds").order_by("-created_at")
+        params = self.request.query_params
+        if q := params.get("q"):
+            qs = qs.filter(
+                models.Q(reference__icontains=q)
+                | models.Q(external_reference__icontains=q)
+                | models.Q(booking__reference__icontains=q)
+                | models.Q(user__email__icontains=q)
+            )
+        return qs
+
+
+class AdminPaymentReconcileView(APIView):
+    """Read-only drift report — compares open payments vs provider status."""
+
+    permission_classes = [IsAuthenticated, PermissionRequired]
+    required_permissions = (PAYMENT_VIEW_ALL,)
+    serializer_class = PaymentSerializer
+
+    def get(self, request):
+        from .providers import get_provider, ProviderError
+
+        discrepancies = []
+        open_payments = Payment.objects.filter(
+            status__in=[Payment.Status.PENDING, Payment.Status.PROCESSING],
+        ).select_related("provider", "booking")
+        for payment in open_payments:
+            try:
+                remote = get_provider(payment.provider.code).check_status(payment)
+            except (ProviderError, AttributeError, NotImplementedError):
+                remote = None
+            if remote and remote != payment.status:
+                discrepancies.append({
+                    "payment": str(payment.id),
+                    "reference": payment.reference,
+                    "booking_reference": payment.booking.reference,
+                    "local_status": payment.status,
+                    "provider_status": remote,
+                    "amount": str(payment.amount),
+                    "currency": payment.currency,
+                })
+        return Response({"discrepancies": discrepancies,
+                         "checked": open_payments.count()})

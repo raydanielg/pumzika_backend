@@ -44,6 +44,9 @@ class PaymentProviderInterface(Protocol):
     def initiate(self, payment, method_details: dict) -> InitiationResult: ...
     def verify_webhook(self, body: bytes, headers: dict) -> WebhookData: ...
     def refund(self, refund) -> InitiationResult: ...
+    def check_status(self, payment) -> str | None:
+        """Provider-side status for reconciliation — None if unsupported."""
+        return None
 
 
 def _mock_secret() -> str:
@@ -93,6 +96,10 @@ class MockProvider:
             status="SUCCESS",
             raw={"sandbox": True},
         )
+
+    def check_status(self, payment) -> str | None:
+        # The sandbox has no remote state — always agree with the local copy.
+        return payment.status
 
 
 def mock_webhook_signature(body: bytes) -> str:

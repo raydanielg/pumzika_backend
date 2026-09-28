@@ -41,11 +41,40 @@ def active_providers():
 
 def _record_transaction(payment: Payment, event_type: str, to_status: str,
                         provider_reference: str = "", raw: dict | None = None):
+    """Append an immutable ledger row — this does NOT change payment.status."""
     PaymentTransaction.objects.create(
         payment=payment, event_type=event_type,
         from_status=payment.status, to_status=to_status,
         provider_reference=provider_reference or "", raw=raw or {},
     )
+
+
+def _transition_payment(payment: Payment, to_status: str, event_type: str,
+                        provider_reference: str = "", raw: dict | None = None,
+                        failure_reason: str = "") -> None:
+    """State-machine-guarded payment status change + ledger entry.
+
+    Raises INVALID_PAYMENT_TRANSITION on impossible moves (e.g. SUCCESS→PENDING)
+    instead of silently corrupting financial state.
+    """
+    if payment.status != to_status and not payment.can_transition_to(to_status):
+        raise BusinessError(
+            f"Cannot move payment from {payment.status} to {to_status}.",
+            code="INVALID_PAYMENT_TRANSITION",
+        )
+    _record_transaction(payment, event_type, to_status,
+                        provider_reference, raw)
+    payment.status = to_status
+    now = timezone.now()
+    if to_status == Payment.Status.SUCCESS and payment.paid_at is None:
+        payment.paid_at = now
+    if to_status == Payment.Status.FAILED:
+        payment.failed_at = now
+        if failure_reason:
+            payment.failure_reason = failure_reason
+    if to_status == Payment.Status.EXPIRED:
+        payment.expired_at = now
+    payment.save()
 
 
 @transaction.atomic
@@ -100,11 +129,13 @@ def initiate_payment(user, *, booking_id, provider_code: str,
 
     payment = Payment.objects.create(
         booking=booking,
+        user=user,
         provider=provider_row,
         amount=booking.price.total,
         currency=booking.currency,
+        payment_method=(method_details or {}).get("method", ""),
         idempotency_key=idempotency_key,
-        reference=generate_reference("PAY"),
+        reference=generate_reference("PZP"),
         expires_at=booking.expires_at,
     )
     _record_transaction(payment, "INITIATED", Payment.Status.PENDING)
@@ -117,9 +148,8 @@ def initiate_payment(user, *, booking_id, provider_code: str,
             payment=payment, status="FAILED", error=str(exc),
             request_payload={"method_details": method_details or {}},
         )
-        _record_transaction(payment, "INITIATION_FAILED", Payment.Status.FAILED)
-        payment.status = Payment.Status.FAILED
-        payment.save(update_fields=["status", "updated_at"])
+        _transition_payment(payment, Payment.Status.FAILED,
+                            "INITIATION_FAILED", failure_reason=str(exc))
         raise BusinessError("Payment initiation failed.", code="PAYMENT_INIT_FAILED")
 
     PaymentAttempt.objects.create(
@@ -127,6 +157,8 @@ def initiate_payment(user, *, booking_id, provider_code: str,
         request_payload={"method_details": method_details or {}},
         response_payload=result.raw or {},
     )
+    _transition_payment(payment, Payment.Status.PENDING, "AWAITING_CONFIRMATION",
+                        result.provider_reference, result.raw)
     payment.external_reference = result.provider_reference
     payment.metadata = {"checkout_url": result.checkout_url}
     payment.save(update_fields=["external_reference", "metadata", "updated_at"])
@@ -212,6 +244,9 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
 
     payment = Payment.objects.select_for_update().get(pk=payment.pk)
 
+    if data.event_type == "payment.success" and payment.status == Payment.Status.SUCCESS:
+        # Provider resent a success under a new event id — no side effects.
+        return
     if data.event_type == "payment.success":
         # Verify the provider-confirmed amount/currency against our record —
         # a mismatched webhook is a reconciliation incident, not a confirm.
@@ -226,14 +261,11 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
             raise BusinessError("Webhook currency mismatch.",
                                 code="PAYMENT_CURRENCY_MISMATCH")
 
-        _record_transaction(payment, "WEBHOOK_SUCCESS", Payment.Status.SUCCESS,
+        _transition_payment(payment, Payment.Status.SUCCESS, "WEBHOOK_SUCCESS",
                             data.external_reference, data.payload)
-        payment.status = Payment.Status.SUCCESS
-        payment.paid_at = timezone.now()
         if data.external_reference:
             payment.external_reference = data.external_reference
-        payment.save(update_fields=["status", "paid_at", "external_reference",
-                                    "updated_at"])
+            payment.save(update_fields=["external_reference", "updated_at"])
         booking_services.confirm_booking(payment.booking,
                                          note="Payment confirmed via webhook")
         booking_services._event(
@@ -252,10 +284,11 @@ def _dispatch_webhook(event: WebhookEvent, data) -> None:
             "payment.expired": Payment.Status.EXPIRED,
         }
         new_status = status_map[data.event_type]
-        _record_transaction(payment, f"WEBHOOK_{data.event_type.upper()}",
-                            new_status, data.external_reference, data.payload)
-        payment.status = new_status
-        payment.save(update_fields=["status", "updated_at"])
+        _transition_payment(
+            payment, new_status, f"WEBHOOK_{data.event_type.upper()}",
+            data.external_reference, data.payload,
+            failure_reason=(data.payload.get("data") or {}).get("reason", ""),
+        )
         # The booking stays payable — a failed payment does NOT kill it.
         # The booking's own expiry window (expire_unpaid_bookings) is the
         # single authority on when held dates are released.
@@ -334,6 +367,7 @@ def initiate_refund(*, booking: Booking, amount: Decimal, reason: str,
     refund = Refund.objects.create(
         payment=payment, booking=booking, amount=amount,
         currency=payment.currency, reason=reason, requested_by=requested_by,
+        reference=generate_reference("RFD"),
         idempotency_key=idempotency_key or None,
     )
     transaction.on_commit(
@@ -403,9 +437,7 @@ def _sync_payment_refund_state(payment: Payment) -> None:
     else:
         return
     if payment.status != new_status:
-        _record_transaction(payment, "REFUND_SYNC", new_status)
-        payment.status = new_status
-        payment.save(update_fields=["status", "updated_at"])
+        _transition_payment(payment, new_status, "REFUND_SYNC")
 
     booking = payment.booking
     if new_status == Payment.Status.REFUNDED and booking.can_transition_to(

@@ -41,6 +41,7 @@ class PaymentProvider(TimeStampedModel):
 
 class Payment(UUIDModel):
     class Status(models.TextChoices):
+        INITIATED = "INITIATED", "Initiated"
         PENDING = "PENDING", "Pending"
         PROCESSING = "PROCESSING", "Processing"
         SUCCESS = "SUCCESS", "Success"
@@ -50,16 +51,38 @@ class Payment(UUIDModel):
         REFUNDED = "REFUNDED", "Refunded"
         PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED", "Partially Refunded"
 
+    #: Payment state machine — arbitrary transitions are rejected.
+    TRANSITIONS = {
+        Status.INITIATED: {Status.PENDING, Status.PROCESSING, Status.FAILED,
+                           Status.CANCELLED},
+        Status.PENDING: {Status.PROCESSING, Status.SUCCESS, Status.FAILED,
+                         Status.CANCELLED, Status.EXPIRED},
+        Status.PROCESSING: {Status.SUCCESS, Status.FAILED, Status.EXPIRED},
+        Status.SUCCESS: {Status.REFUNDED, Status.PARTIALLY_REFUNDED},
+        Status.PARTIALLY_REFUNDED: {Status.REFUNDED},
+        Status.FAILED: set(),
+        Status.CANCELLED: set(),
+        Status.EXPIRED: set(),
+        Status.REFUNDED: set(),
+    }
+
     booking = models.ForeignKey(
         "bookings.Booking", on_delete=models.PROTECT, related_name="payments"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name="payments", null=True, blank=True,
+        help_text="Payer — mirrors booking.guest for direct queries",
     )
     provider = models.ForeignKey(
         PaymentProvider, on_delete=models.PROTECT, related_name="payments"
     )
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=3)
+    payment_method = models.CharField(max_length=30, blank=True, default="")
     status = models.CharField(
-        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+        max_length=20, choices=Status.choices, default=Status.INITIATED,
+        db_index=True,
     )
     idempotency_key = models.CharField(max_length=64, unique=True)
     reference = models.CharField(max_length=64, unique=True, db_index=True)
@@ -68,8 +91,14 @@ class Payment(UUIDModel):
         help_text="Provider-side transaction id",
     )
     paid_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    expired_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
+    failure_reason = models.TextField(blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+
+    def can_transition_to(self, to_status: str) -> bool:
+        return to_status in self.TRANSITIONS.get(self.status, set())
 
     class Meta:
         indexes = [
@@ -118,6 +147,12 @@ class PaymentAttempt(TimeStampedModel):
     error = models.TextField(blank=True)
 
 
+def refund_reference() -> str:
+    from apps.common.utils import generate_reference
+
+    return generate_reference("RFD")
+
+
 class Refund(UUIDModel):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -137,6 +172,9 @@ class Refund(UUIDModel):
         max_length=20, choices=Status.choices, default=Status.PENDING
     )
     reason = models.TextField(blank=True)
+    reference = models.CharField(
+        max_length=64, unique=True, default=refund_reference,
+    )
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True,
         on_delete=models.SET_NULL, related_name="refunds_requested",

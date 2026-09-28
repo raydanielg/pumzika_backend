@@ -299,6 +299,138 @@ class ModerationTests(BaseTestCase):
         assert ctx.exception.code == "REASON_REQUIRED"
 
 
+class PaymentSafetyTests(BaseTestCase):
+    def _paid_payment(self, key="k-ps"):
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        payment = payment_services.initiate_payment(
+            self.guest, booking_id=booking.id, provider_code="MOCK",
+            idempotency_key=key,
+        )
+        body = json.dumps({
+            "event_id": f"evt-{key}", "event_type": "payment.success",
+            "data": {"reference": payment.reference},
+        }).encode()
+        payment_services.process_webhook(
+            "MOCK", body, {"x-webhook-signature": mock_webhook_signature(body)}
+        )
+        payment.refresh_from_db()
+        return booking, payment
+
+    def _webhook(self, payment, event_id, event_type, **data):
+        body = json.dumps({
+            "event_id": event_id, "event_type": event_type,
+            "data": {"reference": payment.reference, **data},
+        }).encode()
+        return payment_services.process_webhook(
+            "MOCK", body, {"x-webhook-signature": mock_webhook_signature(body)}
+        )
+
+    def test_amount_mismatch_rejects_confirmation(self):
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        payment = payment_services.initiate_payment(
+            self.guest, booking_id=booking.id, provider_code="MOCK",
+            idempotency_key="k-amt",
+        )
+        event = self._webhook(payment, "evt-bad-amt", "payment.success",
+                              amount="1.00")
+        payment.refresh_from_db()
+        booking.refresh_from_db()
+        assert event.status == "FAILED"
+        assert payment.status != Payment.Status.SUCCESS
+        assert booking.status != Booking.Status.CONFIRMED
+
+    def test_currency_mismatch_rejects_confirmation(self):
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        payment = payment_services.initiate_payment(
+            self.guest, booking_id=booking.id, provider_code="MOCK",
+            idempotency_key="k-cur",
+        )
+        event = self._webhook(payment, "evt-bad-cur", "payment.success",
+                              currency="USD")
+        payment.refresh_from_db()
+        assert event.status == "FAILED"
+        assert payment.status != Payment.Status.SUCCESS
+
+    def test_webhook_replay_five_times_confirms_once(self):
+        booking = booking_services.create_booking(
+            self.guest, property_id=self.property.id,
+            check_in=self.check_in, check_out=self.check_out, guests_count=1,
+        )
+        payment = payment_services.initiate_payment(
+            self.guest, booking_id=booking.id, provider_code="MOCK",
+            idempotency_key="k-r5",
+        )
+        for _ in range(5):  # same event id delivered repeatedly
+            event = self._webhook(payment, "evt-dup", "payment.success")
+            assert event.status == "PROCESSED"
+        booking.refresh_from_db()
+        payment.refresh_from_db()
+        assert booking.status == Booking.Status.CONFIRMED
+        # one confirmation, one ledger row
+        assert payment.transactions.filter(
+            event_type="WEBHOOK_SUCCESS").count() == 1
+
+        # distinct event ids for the same paid payment are also no-ops
+        self._webhook(payment, "evt-other", "payment.success")
+        assert payment.transactions.filter(
+            event_type="WEBHOOK_SUCCESS").count() == 1
+
+    def test_success_cannot_go_backwards(self):
+        _, payment = self._paid_payment("k-back")
+        assert not payment.can_transition_to(Payment.Status.PENDING)
+        with self.assertRaises(BusinessError):
+            payment_services._transition_payment(
+                payment, Payment.Status.PENDING, "ILLEGAL"
+            )
+
+    def test_over_refund_rejected(self):
+        booking, payment = self._paid_payment("k-ovr")
+        payment_services.initiate_refund(
+            booking=booking, amount=payment.amount - 1, reason="r1",
+            requested_by=self.admin, idempotency_key="rfd-1",
+        )
+        with self.assertRaises(BusinessError) as ctx:
+            payment_services.initiate_refund(
+                booking=booking, amount=Decimal("5"), reason="r2",
+                requested_by=self.admin, idempotency_key="rfd-2",
+            )
+        assert ctx.exception.code == "REFUND_TOO_LARGE"
+
+    def test_partial_refund_status(self):
+        booking, payment = self._paid_payment("k-part")
+        payment_services.initiate_refund(
+            booking=booking, amount=Decimal("1000"), reason="partial",
+            requested_by=self.admin, idempotency_key="rfd-p",
+        )
+        payment.refresh_from_db()
+        assert payment.status == Payment.Status.PARTIALLY_REFUNDED
+
+    def test_insufficient_payout_balance(self):
+        method = PayoutMethod.objects.create(
+            user=self.host, method_type="BANK", label="B",
+            account_name="H", account_number="1",
+        )
+        with self.assertRaises(BusinessError) as ctx:
+            payout_services.request_payout(
+                self.host, method.id, Decimal("999999999"),
+            )
+        assert ctx.exception.code in ("INSUFFICIENT_FUNDS", "BELOW_MINIMUM_PAYOUT")
+
+    def test_payment_statuses_have_machine(self):
+        payment = Payment(status=Payment.Status.SUCCESS)
+        assert not payment.can_transition_to(Payment.Status.PENDING)
+        assert payment.can_transition_to(Payment.Status.REFUNDED)
+
+
 class LocationPrivacyTests(BaseTestCase):
     def test_public_listing_hides_exact_location(self):
         resp = self.client.get(f"/api/v1/properties/{self.property.id}/")

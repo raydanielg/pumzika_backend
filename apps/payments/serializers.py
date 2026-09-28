@@ -22,23 +22,13 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
         fields = ["event_type", "from_status", "to_status", "created_at"]
 
 
-class PaymentSerializer(serializers.ModelSerializer):
-    checkout_url = serializers.CharField(
-        source="metadata.checkout_url", read_only=True, default=None
-    )
-
-    class Meta:
-        model = Payment
-        fields = [
-            "id", "booking", "reference", "amount", "currency", "status",
-            "provider", "checkout_url", "paid_at", "expires_at", "created_at",
-        ]
-        read_only_fields = fields
-
-
 class PaymentInitiateSerializer(serializers.Serializer):
     booking_id = serializers.UUIDField()
     provider = serializers.CharField(max_length=20)
+    payment_method = serializers.CharField(
+        max_length=30, required=False, allow_blank=True,
+        help_text="e.g. mobile_money, card",
+    )
     idempotency_key = serializers.CharField(
         max_length=64, required=False, default="",
         help_text="May also be supplied via the Idempotency-Key header",
@@ -49,9 +39,33 @@ class PaymentInitiateSerializer(serializers.Serializer):
 class RefundSerializer(serializers.ModelSerializer):
     class Meta:
         model = Refund
-        fields = ["id", "payment", "booking", "amount", "currency", "status",
-                  "reason", "processed_at", "created_at"]
+        fields = ["id", "reference", "payment", "booking", "amount", "currency",
+                  "status", "reason", "processed_at", "created_at"]
         read_only_fields = fields
+
+
+class PaymentSerializer(serializers.ModelSerializer):
+    checkout_url = serializers.CharField(
+        source="metadata.checkout_url", read_only=True, default=None
+    )
+    refunds = RefundSerializer(many=True, read_only=True)
+    refunded_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id", "booking", "reference", "amount", "currency", "status",
+            "provider", "payment_method", "checkout_url", "paid_at",
+            "expires_at", "refunds", "refunded_amount", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_refunded_amount(self, obj):
+        refunded = sum(
+            r.amount for r in obj.refunds.all()
+            if r.status == "SUCCESS"
+        )
+        return str(refunded)
 
 
 class RefundCreateSerializer(serializers.Serializer):
