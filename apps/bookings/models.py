@@ -70,6 +70,7 @@ class Booking(UUIDModel):
         REFUNDED = "REFUNDED", "Refunded"
         DISPUTED = "DISPUTED", "Disputed"
         EXPIRED = "EXPIRED", "Expired"
+        NO_SHOW = "NO_SHOW", "No Show"
 
     #: allowed transitions: {from: {to, ...}}
     TRANSITIONS = {
@@ -79,13 +80,15 @@ class Booking(UUIDModel):
         Status.AWAITING_PAYMENT: {Status.CONFIRMED, Status.CANCELLED,
                                   Status.EXPIRED},
         Status.CONFIRMED: {Status.CHECKED_IN, Status.CANCELLED,
-                           Status.DISPUTED, Status.REFUNDED},
+                           Status.DISPUTED, Status.REFUNDED,
+                           Status.NO_SHOW},
         Status.CHECKED_IN: {Status.COMPLETED, Status.DISPUTED, Status.REFUNDED},
         Status.COMPLETED: {Status.DISPUTED, Status.REFUNDED},
         Status.DISPUTED: {Status.CONFIRMED, Status.REFUNDED, Status.CANCELLED},
         Status.CANCELLED: set(),
         Status.REFUNDED: set(),
         Status.EXPIRED: set(),
+        Status.NO_SHOW: set(),
     }
 
     PAYMENT_WINDOW_MINUTES = 30

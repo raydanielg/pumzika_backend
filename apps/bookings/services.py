@@ -241,7 +241,7 @@ def create_booking(guest, *, property_id, check_in: date, check_out: date,
         )
 
     # DB-level double-booking guard — IntegrityError aborts the transaction.
-    availability.mark_dates_booked(prop, check_in, check_out, booking)
+    availability.mark_dates_booked(prop, check_in, check_out, booking, unit=unit)
 
     if promo:
         promo_service = __import__("apps.promotions.services", fromlist=["x"])
@@ -343,7 +343,7 @@ def cancel_booking(booking: Booking, cancelled_by, reason: str = "") -> Booking:
         host_amount=result.host_amount,
         policy_snapshot=booking.cancellation_policy_snapshot,
     )
-    availability.release_dates(booking.property, booking.check_in, booking.check_out)
+    availability.release_dates(booking.property, booking.check_in, booking.check_out, unit=booking.unit)
 
     # Money only moves if a payment was actually captured.
     if result.refund_amount > 0:
@@ -367,7 +367,7 @@ def expire_booking(booking: Booking) -> None:
     if booking.status in (Booking.Status.PENDING, Booking.Status.AWAITING_PAYMENT):
         _transition(booking, Booking.Status.EXPIRED, note="Payment window expired")
         booking.save(update_fields=["status", "updated_at"])
-        availability.release_dates(booking.property, booking.check_in, booking.check_out)
+        availability.release_dates(booking.property, booking.check_in, booking.check_out, unit=booking.unit)
         _event(booking, "BOOKING_EXPIRED")
         # Any still-open payment for this booking is dead.
         from apps.payments.models import Payment
@@ -394,6 +394,37 @@ def check_in(booking: Booking, changed_by) -> Booking:
     booking.checked_in_at = timezone.now()
     booking.save(update_fields=["status", "checked_in_at", "updated_at"])
     _event(booking, "CHECKED_IN", actor=changed_by)
+    return booking
+
+
+@transaction.atomic
+def mark_no_show(booking: Booking, changed_by) -> Booking:
+    """Guest never arrived — host/staff marks after the check-in date.
+
+    The stay was paid for, so host earnings are credited exactly as a
+    completed stay would be; guest refund policy still applies if a
+    dispute is opened later.
+    """
+    booking = Booking.objects.select_for_update().get(pk=booking.pk)
+    if timezone.now().date() <= booking.check_in:
+        raise BusinessError(
+            "A guest can only be marked as no-show after the check-in date.",
+            code="TOO_EARLY",
+        )
+    _transition(booking, Booking.Status.NO_SHOW, changed_by,
+                "Guest did not arrive")
+    booking.save(update_fields=["status", "updated_at"])
+    _event(booking, "NO_SHOW", actor=changed_by)
+
+    from apps.payouts.services import credit_host_for_booking
+
+    credit_host_for_booking(booking)
+
+    from apps.notifications.tasks import notify_booking_no_show
+
+    transaction.on_commit(
+        lambda: notify_booking_no_show.delay(str(booking.id))
+    )
     return booking
 
 

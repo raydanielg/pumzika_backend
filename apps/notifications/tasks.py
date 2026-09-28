@@ -422,3 +422,25 @@ def retry_failed_webhooks() -> int:
                 "event_id": event.external_event_id,
             })
     return retried
+
+
+@shared_task
+def notify_booking_no_show(booking_id: str) -> None:
+    from apps.bookings.models import Booking
+
+    booking = Booking.objects.select_related("guest", "property").filter(
+        pk=booking_id
+    ).first()
+    if not booking:
+        return
+    ctx = {"reference": booking.reference}
+    notify(booking.guest, "BOOKING_NO_SHOW",
+           f"Booking {booking.reference} marked as no-show",
+           f"Your booking for {booking.property.title} was marked as a no-show. "
+           "If this is incorrect, contact support.",
+           context=ctx)
+    notify(booking.property.host, "BOOKING_NO_SHOW",
+           f"No-show recorded for {booking.reference}",
+           f"The guest for {booking.property.title} did not check in. "
+           "Your earnings were credited as usual.",
+           context=ctx)

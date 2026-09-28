@@ -162,6 +162,16 @@ class BookingViewSet(viewsets.GenericViewSet,
               target=booking, request=request)
         return Response(BookingSerializer(booking).data)
 
+    @decorators.action(detail=True, methods=["post"])
+    def no_show(self, request, pk=None):
+        booking = self.get_object()
+        if booking.property.host_id != request.user.id and not request.user.is_staff_role:
+            raise PermissionDeniedError("Only the host can mark a no-show.")
+        booking = services.mark_no_show(booking, request.user)
+        audit(actor=request.user, action="booking.no_show",
+              target=booking, request=request)
+        return Response(BookingSerializer(booking).data)
+
     @decorators.action(detail=True, methods=["get", "post"])
     def notes(self, request, pk=None):
         """Booking notes — internal notes never reach guests."""

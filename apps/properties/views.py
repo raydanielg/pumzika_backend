@@ -283,6 +283,12 @@ class PropertyViewSet(viewsets.ModelViewSet):
         prop = self.get_object()
         if request.method == "GET":
             units = prop.units.all()
+            is_owner = (
+                request.user.is_authenticated
+                and (request.user.is_staff_role or prop.host_id == request.user.id)
+            )
+            if not is_owner:
+                units = units.filter(is_active=True)
             return Response(PropertyUnitSerializer(units, many=True).data)
         IsPropertyHostOrStaff().has_object_permission(request, self, prop)             or self.permission_denied(request)
         serializer = PropertyUnitSerializer(data=request.data)

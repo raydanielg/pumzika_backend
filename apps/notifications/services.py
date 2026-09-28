@@ -42,6 +42,7 @@ EVENT_DEFAULTS: dict[str, list[str]] = {
     "BOOKING_CANCELLED": [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
     "BOOKING_COMPLETED": [NotificationChannel.IN_APP],
     "BOOKING_EXPIRED": [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
+    "BOOKING_NO_SHOW": [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
     "CHECKIN_REMINDER": [NotificationChannel.IN_APP, NotificationChannel.SMS],
     "CHECKOUT_REMINDER": [NotificationChannel.IN_APP],
     "REVIEW_REMINDER": [NotificationChannel.IN_APP, NotificationChannel.EMAIL],
@@ -60,6 +61,7 @@ CRITICAL_EVENTS = {
     "SECURITY_ALERT", "PASSWORD_RESET", "EMAIL_VERIFY", "PHONE_VERIFY",
     "PAYMENT_SUCCESS", "PAYMENT_FAILED", "PAYMENT_PENDING",
     "BOOKING_CONFIRMED", "BOOKING_CANCELLED", "BOOKING_EXPIRED",
+    "BOOKING_NO_SHOW",
     "PAYOUT_FAILED", "PAYOUT_COMPLETED", "KYC_DECISION",
     "REFUND_INITIATED", "REFUND_COMPLETED",
 }
