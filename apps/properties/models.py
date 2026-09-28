@@ -73,6 +73,10 @@ class Property(UUIDModel):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="properties"
     )
     title = models.CharField(max_length=200)
+    slug = models.SlugField(
+        max_length=220, unique=True, db_index=True, null=True, blank=True,
+        help_text="Public URL slug — stable, generated once from the title.",
+    )
     description = models.TextField()
     property_type = models.ForeignKey(
         PropertyType, on_delete=models.PROTECT, related_name="properties"
@@ -150,6 +154,22 @@ class Property(UUIDModel):
 
     def __str__(self) -> str:
         return self.title
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = self._make_slug()
+        super().save(*args, **kwargs)
+
+    def _make_slug(self) -> str:
+        import secrets
+
+        from django.utils.text import slugify
+
+        base = slugify(self.title)[:190] or "stay"
+        slug = base
+        while type(self).objects.filter(slug=slug).exclude(pk=self.pk).exists():
+            slug = f"{base}-{secrets.token_hex(3)}"
+        return slug
 
     @property
     def is_publicly_bookable(self) -> bool:

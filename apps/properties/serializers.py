@@ -110,7 +110,7 @@ class PropertyPublicSerializer(serializers.ModelSerializer):
     class Meta:
         model = Property
         fields = [
-            "id", "title", "description", "property_type",
+            "id", "slug", "title", "description", "property_type",
             "country", "country_name", "country_code",
             "region", "region_name", "city", "city_name",
             "district", "area",

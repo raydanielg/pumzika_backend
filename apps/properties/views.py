@@ -101,6 +101,26 @@ class PropertyViewSet(viewsets.ModelViewSet):
         return PropertyPublicSerializer
 
     def get_object(self):
+        # Public URLs use the readable slug; hosts/admin may still use the UUID.
+        lookup = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
+        if lookup and self.action == "retrieve":
+            qs = self.filter_queryset(self.get_queryset())
+            obj = None
+            try:
+                import uuid as _uuid
+
+                obj = qs.filter(pk=_uuid.UUID(str(lookup))).first()
+            except (ValueError, AttributeError, TypeError):
+                pass
+            if obj is None:
+                obj = qs.filter(slug=lookup).first()
+            if obj is None:
+                raise NotFoundError(
+                    "Property not found.", code="PROPERTY_NOT_FOUND"
+                )
+            self.check_object_permissions(self.request, obj)
+            self._resolved_obj = obj
+            return obj
         obj = super().get_object()
         self._resolved_obj = obj
         return obj
